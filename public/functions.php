@@ -9,7 +9,7 @@ declare(strict_types=1);
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
 
-const SCHEMA_VERSION = '2.3.4';
+const SCHEMA_VERSION = '2.3.5';
 
 /* --------------------------- Error helpers --------------------------- */
 
@@ -465,6 +465,7 @@ function normalize_user_preferences(array $row): array {
         'show_is_hungarian' => $bool($row['show_is_hungarian'] ?? null, true),
         'show_publisher' => $bool($row['show_publisher'] ?? null, true),
         'show_year' => $bool($row['show_year'] ?? null, true),
+        'show_copy_count' => $bool($row['show_copy_count'] ?? null, false),
         'show_status' => $bool($row['show_status'] ?? null, true),
         'show_placement' => $bool($row['show_placement'] ?? null, true),
         'show_isbn' => $bool($row['show_isbn'] ?? null, false),
@@ -476,10 +477,31 @@ function normalize_user_preferences(array $row): array {
 }
 
 function fetch_user_preferences(PDO $pdo, int $user_id): array {
-    $st = $pdo->prepare("SELECT logo_path, bg_color, fg_color, text_size, per_page,
-                                show_cover, show_subtitle, show_series, show_is_hungarian,
-                                show_publisher, show_year, show_status, show_placement,
-                                show_isbn, show_loaned_to, show_loaned_date, show_subjects, show_notes
+    static $has_show_copy_count = null;
+    if ($has_show_copy_count === null) {
+        try {
+            $col = $pdo->prepare("
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'UserPreferences'
+                  AND COLUMN_NAME = 'show_copy_count'
+            ");
+            $col->execute();
+            $has_show_copy_count = ((int)$col->fetchColumn() > 0);
+        } catch (Throwable $e) {
+            $has_show_copy_count = false;
+        }
+    }
+
+    $select_cols = "logo_path, bg_color, fg_color, text_size, per_page,
+                    show_cover, show_subtitle, show_series, show_is_hungarian,
+                    show_publisher, show_year, show_status, show_placement,
+                    show_isbn, show_loaned_to, show_loaned_date, show_subjects, show_notes";
+    if ($has_show_copy_count) {
+        $select_cols .= ", show_copy_count";
+    }
+
+    $st = $pdo->prepare("SELECT {$select_cols}
                          FROM UserPreferences
                          WHERE user_id = ? LIMIT 1");
     $st->execute([$user_id]);
@@ -497,6 +519,7 @@ function fetch_user_preferences(PDO $pdo, int $user_id): array {
             'show_is_hungarian' => true,
             'show_publisher' => true,
             'show_year' => true,
+            'show_copy_count' => false,
             'show_status' => true,
             'show_placement' => true,
             'show_isbn' => false,

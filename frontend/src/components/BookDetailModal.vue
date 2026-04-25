@@ -26,6 +26,7 @@
             <div><strong>Authors</strong><div>{{ book.authors || "—" }}</div></div>
             <div><strong>Publisher</strong><div>{{ book.publisher || "—" }}</div></div>
             <div><strong>Year</strong><div>{{ book.year_published || "—" }}</div></div>
+            <div><strong>Copies</strong><div>{{ book.copy_count || 1 }}</div></div>
             <div><strong>ISBN</strong><div>{{ book.isbn || "—" }}</div></div>
             <div><strong>LCCN</strong><div>{{ book.lccn || "—" }}</div></div>
             <div><strong>Subjects</strong><div>{{ book.subjects || "—" }}</div></div>

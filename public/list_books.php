@@ -16,7 +16,7 @@ $pdo = pdo();
  * - q:         free-text search (tokenized on whitespace)
  * - page:      1-based page index
  * - per:       page size (alias used by frontend)
- * - sort:      one of: id|title|subtitle|series|publisher|year|authors|authors_hu|bookcase|cover|status|isbn|loaned_to|loaned_date|subjects|notes
+ * - sort:      one of: id|title|subtitle|series|publisher|year|copy_count|authors|authors_hu|bookcase|cover|status|isbn|loaned_to|loaned_date|subjects|notes
  * - dir:       asc|desc (default: desc)
  */
 $q        = isset($_GET['q']) ? trim((string)$_GET['q']) : '';
@@ -39,6 +39,7 @@ $sortable = [
  'series'    => 'b.series',
  'publisher' => 'p.name',
  'year'      => 'b.year_published',
+ 'copy_count'=> 'b.copy_count',
  'authors'   => "CASE WHEN authors IS NULL THEN 1 ELSE 0 END, authors",
  'authors_hu'=> "CASE WHEN authors_hu_flag IS NULL THEN 1 ELSE 0 END, authors_hu_flag",
  'bookcase'  => 'pl.bookcase_no, pl.shelf_no',
@@ -144,6 +145,7 @@ $sql = "
 SELECT
   b.book_id AS id,
   b.title, b.subtitle, b.series,
+  b.copy_count,
   b.year_published,
   b.isbn, b.lccn,
   b.notes,

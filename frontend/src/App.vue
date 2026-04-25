@@ -268,6 +268,7 @@ const preferences = ref({
   show_is_hungarian: true,
   show_publisher: true,
   show_year: true,
+  show_copy_count: false,
   show_status: true,
   show_placement: true,
   show_isbn: false,
@@ -479,6 +480,7 @@ const resetPreferences = () => {
     show_is_hungarian: true,
     show_publisher: true,
     show_year: true,
+    show_copy_count: false,
     show_status: true,
     show_placement: true,
     show_isbn: false,
@@ -878,7 +880,11 @@ const onDelete = async (book) => {
   }
   if (!confirm(msg)) return;
   try {
-    await deleteBook(id);
+    const res = await deleteBook(id);
+    if (res?.data?.decremented) {
+      const after = res?.data?.copy_count_after;
+      alert(`Book #${id}: one copy removed. Remaining copies: ${after}.`);
+    }
     await reload();
   } catch (e) {
     if (e && e.status === 401) {

@@ -14,7 +14,7 @@ $prefs = fetch_user_preferences($pdo, (int)$me['uid']);
 $pref_bg = isset($prefs['bg_color']) && $prefs['bg_color'] ? (string)$prefs['bg_color'] : '#ffffff';
 $pref_fg = isset($prefs['fg_color']) && $prefs['fg_color'] ? (string)$prefs['fg_color'] : '#1a1a1a';
 
-$allowed_status = ['ALL', 'NEW', 'IGNORE', 'CONFIRMED'];
+$allowed_status = ['ALL', 'NEW', 'IGNORE', 'CONFIRMED', 'MERGED'];
 $status_filter = strtoupper((string)($_GET['status'] ?? 'NEW'));
 if (!in_array($status_filter, $allowed_status, true)) {
     $status_filter = 'NEW';
@@ -34,6 +34,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (!in_array($status_in, ['NEW', 'IGNORE', 'CONFIRMED'], true)) {
         $save_error = 'Invalid status.';
     } else {
+        $cur = $pdo->prepare("SELECT status FROM duplicate_review WHERE dup_key = ? LIMIT 1");
+        $cur->execute([$dup_key]);
+        $cur_status = strtoupper((string)($cur->fetchColumn() ?: ''));
+        if ($cur_status === 'MERGED') {
+            $save_error = 'MERGED groups are system-managed and read-only.';
+        }
+    }
+
+    if ($save_error === null) {
         $ins = $pdo->prepare(
             "INSERT INTO duplicate_review (dup_key, status, note)
              VALUES (?, ?, ?)
@@ -202,9 +211,16 @@ if ($book_ids) {
     }
 
     $sql = "
-        SELECT b.book_id, b.title, b.subtitle, b.year_published, b.isbn,
+        SELECT b.book_id, b.title, b.subtitle, b.series, b.notes, b.copy_count,
+               b.year_published, b.isbn, b.cover_image, b.cover_thumb,
                b.publisher_id, p.name AS publisher_name,
                b.placement_id, pl.bookcase_no, pl.shelf_no,
+               (
+                   SELECT GROUP_CONCAT(DISTINCT s.name ORDER BY s.name SEPARATOR '; ')
+                   FROM Books_Subjects bs
+                   JOIN Subjects s ON s.subject_id = bs.subject_id
+                   WHERE bs.book_id = b.book_id
+               ) AS subjects,
                ba.author_id, ba.author_ord,
                a.sort_name, a.name, a.first_name, a.last_name
         FROM Books b
@@ -242,12 +258,18 @@ if ($book_ids) {
                 'book_id' => $book_id,
                 'title' => (string)($row['title'] ?? ''),
                 'subtitle' => (string)($row['subtitle'] ?? ''),
+                'series' => (string)($row['series'] ?? ''),
+                'notes' => (string)($row['notes'] ?? ''),
+                'copy_count' => (int)($row['copy_count'] ?? 1),
                 'year_published' => $row['year_published'] ?? null,
                 'isbn' => (string)($row['isbn'] ?? ''),
+                'cover_image' => (string)($row['cover_image'] ?? ''),
+                'cover_thumb' => (string)($row['cover_thumb'] ?? ''),
                 'publisher_name' => (string)($row['publisher_name'] ?? ''),
                 'placement_id' => $row['placement_id'] ?? null,
                 'bookcase_no' => $row['bookcase_no'] ?? null,
                 'shelf_no' => $row['shelf_no'] ?? null,
+                'subjects' => (string)($row['subjects'] ?? ''),
                 'authors' => [],
             ];
         }
@@ -292,6 +314,7 @@ usort($sorted_groups, static function (array $a, array $b) use ($group_sort_year
 });
 
 $saved = isset($_GET['saved']) && (string)$_GET['saved'] !== '';
+$merged = isset($_GET['merged']) && (string)$_GET['merged'] !== '';
 $export_csv = isset($_GET['export']) && (string)$_GET['export'] === '1';
 
 if ($export_csv) {
@@ -324,6 +347,7 @@ if ($export_csv) {
         'publisher_name',
         'year_published',
         'isbn',
+        'copy_count',
         'location',
     ]);
     $group_index = 0;
@@ -367,6 +391,7 @@ if ($export_csv) {
                 $book['publisher_name'] ?? '',
                 $book['year_published'] ?? '',
                 $book['isbn'] ?? '',
+                $book['copy_count'] ?? 1,
                 $location_display($book),
             ]);
         }
@@ -407,6 +432,22 @@ header('Content-Type: text/html; charset=utf-8');
   th { background: rgba(0,0,0,0.05); font-weight: 600; }
   .muted { color: rgba(0,0,0,0.6); }
   .actions { margin-bottom: .75rem; }
+  .merge-controls { margin: .75rem 0; display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+  .merge-btn { background: #8a1f1f; color: #fff; border: 1px solid #6d1717; border-radius: 6px; padding: .45rem .7rem; cursor: pointer; }
+  .merge-btn[disabled] { opacity: .55; cursor: not-allowed; }
+  .system-note { margin-top: .4rem; font-size: .92rem; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: none; align-items: center; justify-content: center; z-index: 1000; }
+  .modal-backdrop.open { display: flex; }
+  .modal { width: min(860px, 95vw); max-height: 88vh; overflow: auto; background: #fff; color: #111; border-radius: 10px; border: 1px solid rgba(0,0,0,0.2); box-shadow: 0 12px 28px rgba(0,0,0,0.25); }
+  .modal h2 { margin: 0; font-size: 1.1rem; }
+  .modal-header, .modal-footer { padding: .8rem 1rem; border-bottom: 1px solid rgba(0,0,0,0.12); }
+  .modal-footer { border-bottom: 0; border-top: 1px solid rgba(0,0,0,0.12); display: flex; justify-content: flex-end; gap: .5rem; }
+  .modal-body { padding: .8rem 1rem; }
+  .modal pre { white-space: pre-wrap; background: #f7f7f7; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; padding: .7rem; margin: .7rem 0; }
+  .modal .row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+  .modal input[type="text"] { padding: .4rem .5rem; border: 1px solid rgba(0,0,0,0.25); border-radius: 6px; min-width: 160px; }
+  .modal button { padding: .45rem .7rem; border: 1px solid rgba(0,0,0,0.25); border-radius: 6px; cursor: pointer; }
+  .modal button.danger { background: #8a1f1f; color: #fff; border-color: #6d1717; }
 </style>
 
 <h1>Duplicate candidates</h1>
@@ -414,6 +455,10 @@ header('Content-Type: text/html; charset=utf-8');
 
 <?php if ($saved): ?>
   <div class="notice">Review saved.</div>
+<?php endif; ?>
+
+<?php if ($merged): ?>
+  <div class="notice">Selected duplicates were merged as copies.</div>
 <?php endif; ?>
 
 <?php if ($save_error): ?>
@@ -454,8 +499,34 @@ header('Content-Type: text/html; charset=utf-8');
         $pub_pairs[$label] = true;
       }
       $pub_list = implode(', ', array_keys($pub_pairs));
+      $is_merged = strtoupper((string)$group['status']) === 'MERGED';
+      $group_payload_books = [];
+      foreach ($book_ids as $book_id) {
+        $book = $book_details[$book_id] ?? null;
+        if (!$book) continue;
+        $group_payload_books[] = [
+          'book_id' => (int)$book['book_id'],
+          'title' => (string)$book['title'],
+          'subtitle' => (string)($book['subtitle'] ?? ''),
+          'authors' => implode('; ', $book['authors']),
+          'publisher' => (string)($book['publisher_name'] ?? ''),
+          'year_published' => (string)($book['year_published'] ?? ''),
+          'isbn' => (string)($book['isbn'] ?? ''),
+          'series' => (string)($book['series'] ?? ''),
+          'subjects' => (string)($book['subjects'] ?? ''),
+          'notes' => (string)($book['notes'] ?? ''),
+          'location' => (string)$location_display($book),
+          'copy_count' => (int)($book['copy_count'] ?? 1),
+        ];
+      }
+      $group_payload = [
+        'dupKey' => (string)$group['dup_key'],
+        'status' => (string)$group['status'],
+        'books' => $group_payload_books,
+      ];
+      $group_payload_json = htmlspecialchars((string)json_encode($group_payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ENT_QUOTES, 'UTF-8');
     ?>
-    <section class="group">
+    <section class="group js-dup-group" data-group-json="<?php echo $group_payload_json; ?>">
       <div class="group-header">
         <div>
           <div class="group-title"><?php echo htmlspecialchars($title_display, ENT_QUOTES, 'UTF-8'); ?></div>
@@ -470,19 +541,32 @@ header('Content-Type: text/html; charset=utf-8');
         <div class="form-row">
           <label>
             Status
-            <select name="status">
+            <select name="status" <?php echo $is_merged ? 'disabled' : ''; ?>>
               <?php foreach (['NEW','IGNORE','CONFIRMED'] as $opt): ?>
                 <option value="<?php echo $opt; ?>" <?php echo $group['status'] === $opt ? 'selected' : ''; ?>><?php echo $opt; ?></option>
               <?php endforeach; ?>
             </select>
           </label>
-          <button type="submit">Save</button>
+          <button type="submit" <?php echo $is_merged ? 'disabled' : ''; ?>>Save</button>
         </div>
         <label>
           Note (optional)
-          <textarea name="note" placeholder="Add context or decision rationale..."><?php echo htmlspecialchars((string)($group['note'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></textarea>
+          <textarea name="note" placeholder="Add context or decision rationale..." <?php echo $is_merged ? 'readonly' : ''; ?>><?php echo htmlspecialchars((string)($group['note'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></textarea>
         </label>
+        <?php if ($is_merged): ?>
+          <div class="muted system-note">MERGED is system-managed and read-only.</div>
+        <?php endif; ?>
       </form>
+
+      <div class="merge-controls">
+        <button
+          type="button"
+          class="merge-btn"
+          data-action="merge"
+          <?php echo $is_merged ? 'disabled' : ''; ?>
+        >Merge selected as copies</button>
+        <span class="merge-hint muted" data-merge-hint>Select at least two rows, then choose one selected row as Master.</span>
+      </div>
 
       <?php if ($pub_list !== ''): ?>
         <div class="muted">Publishers: <?php echo htmlspecialchars($pub_list, ENT_QUOTES, 'UTF-8'); ?></div>
@@ -491,12 +575,15 @@ header('Content-Type: text/html; charset=utf-8');
       <table>
         <thead>
           <tr>
+            <th>Include</th>
+            <th>Master</th>
             <th>Book ID</th>
             <th>Title</th>
             <th>Authors</th>
             <th>Publisher</th>
             <th>Year</th>
             <th>ISBN</th>
+            <th>Copies</th>
             <th>Location</th>
           </tr>
         </thead>
@@ -505,12 +592,31 @@ header('Content-Type: text/html; charset=utf-8');
             <?php $book = $book_details[$book_id] ?? null; ?>
             <?php if (!$book) continue; ?>
             <tr>
+              <td>
+                <input
+                  type="checkbox"
+                  data-role="include-select"
+                  value="<?php echo (int)$book['book_id']; ?>"
+                  checked
+                  <?php echo $is_merged ? 'disabled' : ''; ?>
+                >
+              </td>
+              <td>
+                <input
+                  type="radio"
+                  data-role="master-select"
+                  name="master_<?php echo md5($group['dup_key']); ?>"
+                  value="<?php echo (int)$book['book_id']; ?>"
+                  <?php echo $is_merged ? 'disabled' : ''; ?>
+                >
+              </td>
               <td><?php echo (int)$book['book_id']; ?></td>
               <td><?php echo htmlspecialchars($format_title_display($book['title'], $book['subtitle'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
               <td><?php echo htmlspecialchars(implode('; ', $book['authors']), ENT_QUOTES, 'UTF-8'); ?></td>
               <td><?php echo htmlspecialchars($book['publisher_name'], ENT_QUOTES, 'UTF-8'); ?></td>
               <td><?php echo htmlspecialchars((string)($book['year_published'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td>
               <td><?php echo htmlspecialchars($book['isbn'], ENT_QUOTES, 'UTF-8'); ?></td>
+              <td><?php echo (int)($book['copy_count'] ?? 1); ?></td>
               <td><?php echo htmlspecialchars($location_display($book), ENT_QUOTES, 'UTF-8'); ?></td>
             </tr>
           <?php endforeach; ?>
@@ -519,3 +625,257 @@ header('Content-Type: text/html; charset=utf-8');
     </section>
   <?php endforeach; ?>
 <?php endif; ?>
+
+<div class="modal-backdrop" id="mergeModal" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mergeModalTitle">
+    <div class="modal-header">
+      <h2 id="mergeModalTitle">Confirm duplicate merge</h2>
+    </div>
+    <div class="modal-body">
+      <pre id="mergeModalText"></pre>
+      <div class="row">
+        <label for="mergeConfirmInput"><strong>Type MERGE to continue:</strong></label>
+        <input type="text" id="mergeConfirmInput" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="error" id="mergeModalError" style="display:none;"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" id="mergeCancelBtn">Cancel</button>
+      <button type="button" class="danger" id="mergeConfirmBtn" disabled>Merge</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const norm = (v) => String(v || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const normList = (v) => {
+    return String(v || "")
+      .split(";")
+      .map((x) => norm(x))
+      .filter(Boolean)
+      .sort()
+      .join(";");
+  };
+
+  const groups = Array.from(document.querySelectorAll(".js-dup-group"));
+  const modal = document.getElementById("mergeModal");
+  const modalText = document.getElementById("mergeModalText");
+  const modalError = document.getElementById("mergeModalError");
+  const confirmInput = document.getElementById("mergeConfirmInput");
+  const confirmBtn = document.getElementById("mergeConfirmBtn");
+  const cancelBtn = document.getElementById("mergeCancelBtn");
+
+  let pending = null;
+
+  function computeDiffs(master, others) {
+    const fields = [
+      ["title", "title"],
+      ["subtitle", "subtitle"],
+      ["authors", "authors (normalized list)"],
+      ["publisher", "publisher"],
+      ["year_published", "year_published"],
+      ["isbn", "ISBN"],
+      ["series", "series"],
+      ["subjects", "subjects (normalized list)"],
+      ["notes", "notes"],
+      ["location", "placement/location (informational)"],
+    ];
+    const lines = [];
+    let hardDiff = false;
+
+    others.forEach((other) => {
+      fields.forEach(([key, label]) => {
+        const m = (key === "authors" || key === "subjects") ? normList(master[key]) : norm(master[key]);
+        const o = (key === "authors" || key === "subjects") ? normList(other[key]) : norm(other[key]);
+        if (m === o) return;
+        if (key !== "location") hardDiff = true;
+        const info = key === "location" ? " (informational)" : "";
+        lines.push(`- ${label}${info}: "${master[key] || "—"}" vs "${other[key] || "—"}" (Book ID ${other.book_id})`);
+      });
+    });
+
+    return { hardDiff, lines };
+  }
+
+  function setGroupHint(groupEl, text) {
+    const hint = groupEl.querySelector("[data-merge-hint]");
+    if (hint) hint.textContent = text;
+  }
+
+  function updateGroupState(groupEl) {
+    const payload = JSON.parse(groupEl.dataset.groupJson || "{}");
+    const status = String(payload.status || "NEW").toUpperCase();
+    const radios = Array.from(groupEl.querySelectorAll("[data-role='master-select']"));
+    const includes = Array.from(groupEl.querySelectorAll("[data-role='include-select']"));
+    const includedIds = new Set(
+      includes.filter((c) => c.checked).map((c) => Number(c.value))
+    );
+
+    radios.forEach((radio) => {
+      const bookId = Number(radio.value);
+      const enabled = includedIds.has(bookId) && status !== "MERGED";
+      radio.disabled = !enabled;
+      if (!enabled) radio.checked = false;
+    });
+
+    const selected = radios.filter((r) => r.checked);
+    const mergeBtn = groupEl.querySelector("[data-action='merge']");
+    const selectedMasterId = selected.length === 1 ? Number(selected[0].value) : null;
+    const books = Array.isArray(payload.books) ? payload.books : [];
+    const selectedBooks = books.filter((b) => includedIds.has(Number(b.book_id)));
+    const nonMasterCount = selectedMasterId
+      ? selectedBooks.filter((b) => Number(b.book_id) !== selectedMasterId).length
+      : 0;
+
+    let reason = "Select at least two rows, then choose one selected row as Master.";
+    let canMerge = false;
+    if (status === "IGNORE") {
+      reason = "Merge is disabled for IGNORE groups.";
+    } else if (status === "MERGED") {
+      reason = "MERGED groups are system-managed.";
+    } else if (selectedBooks.length < 2) {
+      reason = "Select at least two rows to merge.";
+    } else if (selected.length !== 1) {
+      reason = "Select exactly one Master.";
+    } else if (nonMasterCount < 1) {
+      reason = "Selected rows must include at least one non-master duplicate.";
+    } else {
+      canMerge = true;
+      reason = "Ready to merge.";
+    }
+
+    if (mergeBtn) mergeBtn.disabled = !canMerge;
+    setGroupHint(groupEl, reason);
+
+    return {
+      canMerge,
+      payload,
+      selectedMasterId,
+      includedIds,
+    };
+  }
+
+  function openModal(data) {
+    pending = data;
+    modalText.textContent = data.message;
+    modalError.style.display = "none";
+    modalError.textContent = "";
+    confirmInput.value = "";
+    confirmBtn.disabled = true;
+    modal.classList.add("open");
+    modal.setAttribute("aria-hidden", "false");
+    confirmInput.focus();
+  }
+
+  function closeModal() {
+    pending = null;
+    modal.classList.remove("open");
+    modal.setAttribute("aria-hidden", "true");
+  }
+
+  groups.forEach((groupEl) => {
+    const radios = Array.from(groupEl.querySelectorAll("[data-role='master-select']"));
+    const includes = Array.from(groupEl.querySelectorAll("[data-role='include-select']"));
+    radios.forEach((radio) => radio.addEventListener("change", () => updateGroupState(groupEl)));
+    includes.forEach((checkbox) => checkbox.addEventListener("change", () => updateGroupState(groupEl)));
+    updateGroupState(groupEl);
+
+    const mergeBtn = groupEl.querySelector("[data-action='merge']");
+    if (!mergeBtn) return;
+    mergeBtn.addEventListener("click", () => {
+      const state = updateGroupState(groupEl);
+      if (!state.canMerge) return;
+      const books = Array.isArray(state.payload.books) ? state.payload.books : [];
+      const selectedBooks = books.filter((b) => state.includedIds.has(Number(b.book_id)));
+      const master = selectedBooks.find((b) => Number(b.book_id) === state.selectedMasterId);
+      if (!master) return;
+      const others = selectedBooks.filter((b) => Number(b.book_id) !== state.selectedMasterId);
+      if (!others.length) return;
+
+      const oldCount = Number(master.copy_count || 1);
+      const newCount = oldCount + others.length;
+      const otherIds = others.map((b) => Number(b.book_id)).join(", ");
+      const diff = computeDiffs(master, others);
+
+      let text = "";
+      if (!diff.hardDiff) {
+        text += "The selected records appear identical based on catalog data.\n\n";
+        text += `This will keep Book ID ${master.book_id} as master, increase copy_count from ${oldCount} to ${newCount}, and remove Book IDs ${otherIds}.\n\n`;
+        if (diff.lines.length) {
+          text += "Informational differences:\n";
+          text += diff.lines.join("\n") + "\n\n";
+        }
+        text += "Type MERGE to continue or press Cancel.";
+      } else {
+        text += "Warning: selected records are not fully identical.\n\n";
+        text += "Differences found:\n";
+        text += diff.lines.join("\n") + "\n\n";
+        text += "These may represent different editions, translations, bindings, conditions, dedications, or otherwise distinct copies.\n\n";
+        text += "Only merge if these are truly identical physical copies.\n\n";
+        text += "Type MERGE to continue or press Cancel.";
+      }
+
+      openModal({
+        masterBookId: Number(master.book_id),
+        duplicateBookIds: others.map((b) => Number(b.book_id)),
+        message: text,
+      });
+    });
+  });
+
+  confirmInput.addEventListener("input", () => {
+    confirmBtn.disabled = confirmInput.value !== "MERGE";
+    modalError.style.display = "none";
+  });
+
+  confirmInput.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Enter") return;
+    if (confirmInput.value !== "MERGE") {
+      ev.preventDefault();
+      return;
+    }
+    ev.preventDefault();
+    confirmBtn.click();
+  });
+
+  cancelBtn.addEventListener("click", closeModal);
+  modal.addEventListener("click", (ev) => {
+    if (ev.target === modal) closeModal();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && modal.classList.contains("open")) closeModal();
+  });
+
+  confirmBtn.addEventListener("click", async () => {
+    if (!pending || confirmInput.value !== "MERGE") return;
+    confirmBtn.disabled = true;
+    cancelBtn.disabled = true;
+    try {
+      const res = await fetch("merge_duplicate_books.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          masterBookId: pending.masterBookId,
+          duplicateBookIds: pending.duplicateBookIds,
+          confirm: "MERGE",
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.ok === false) {
+        throw new Error(json.error || `HTTP ${res.status}`);
+      }
+      const currentUrl = new URL(window.location.href);
+      currentUrl.searchParams.set("status", currentUrl.searchParams.get("status") || "NEW");
+      currentUrl.searchParams.set("merged", "1");
+      window.location.href = currentUrl.toString();
+    } catch (err) {
+      modalError.textContent = err && err.message ? err.message : "Merge failed.";
+      modalError.style.display = "block";
+      confirmBtn.disabled = confirmInput.value !== "MERGE";
+      cancelBtn.disabled = false;
+    }
+  });
+})();
+</script>

@@ -304,6 +304,7 @@ export async function updateUserPreferences(payload = {}, logoFile = null) {
   if (payload.show_is_hungarian !== undefined) fd.append('show_is_hungarian', payload.show_is_hungarian ? '1' : '0');
   if (payload.show_publisher !== undefined) fd.append('show_publisher', payload.show_publisher ? '1' : '0');
   if (payload.show_year !== undefined) fd.append('show_year', payload.show_year ? '1' : '0');
+  if (payload.show_copy_count !== undefined) fd.append('show_copy_count', payload.show_copy_count ? '1' : '0');
   if (payload.show_status !== undefined) fd.append('show_status', payload.show_status ? '1' : '0');
   if (payload.show_placement !== undefined) fd.append('show_placement', payload.show_placement ? '1' : '0');
   if (payload.show_isbn !== undefined) fd.append('show_isbn', payload.show_isbn ? '1' : '0');

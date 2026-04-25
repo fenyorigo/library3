@@ -112,6 +112,10 @@
           <div v-if="readonly" class="ro">{{ book.year_published ?? '—' }}</div>
           <input v-else type="number" v-model.number="form.year_published" min="1601" max="2155" />
 
+          <label>Copies</label>
+          <div v-if="readonly" class="ro">{{ book.copy_count ?? 1 }}</div>
+          <input v-else type="number" v-model.number="form.copy_count" min="1" />
+
           <!-- ISBN + LCCN -->
           <label>ISBN</label>
           <div v-if="readonly" class="ro">{{ book.isbn || '—' }}</div>
@@ -289,6 +293,7 @@ const initForm = (b = {}, mode = "view") => {
       subtitle: b.subtitle || "",
       series: b.series || "",
       year_published: b.year_published ?? null,
+      copy_count: b.copy_count ?? 1,
       isbn: b.isbn || "",
       lccn: b.lccn || "",
       notes: b.notes || "",
@@ -309,6 +314,7 @@ const initForm = (b = {}, mode = "view") => {
     subtitle: b.subtitle || "",
     series: b.series || "",
     year_published: b.year_published ?? null,
+    copy_count: b.copy_count ?? 1,
     isbn: b.isbn || "",
     lccn: b.lccn || "",
     notes: b.notes || "",
@@ -610,6 +616,7 @@ const save = () => {
     subtitle: form.value.subtitle || null,
     series: form.value.series || null,
     year_published: normYear,
+    copy_count: Math.max(1, Number(form.value.copy_count || 1)),
     isbn: form.value.isbn || null,
     lccn: form.value.lccn || null,
   };

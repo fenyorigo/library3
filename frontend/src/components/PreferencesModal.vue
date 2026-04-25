@@ -108,6 +108,10 @@
               Year
             </label>
             <label class="inline">
+              <input type="checkbox" v-model="form.show_copy_count" />
+              Copies
+            </label>
+            <label class="inline">
               <input type="checkbox" v-model="form.show_status" />
               Status
             </label>
@@ -174,6 +178,7 @@ const form = ref({
   show_is_hungarian: true,
   show_publisher: true,
   show_year: true,
+  show_copy_count: false,
   show_status: true,
   show_placement: true,
   show_isbn: false,
@@ -221,6 +226,7 @@ watch(
       show_is_hungarian: typeof prefs?.show_is_hungarian === "boolean" ? prefs.show_is_hungarian : true,
       show_publisher: typeof prefs?.show_publisher === "boolean" ? prefs.show_publisher : true,
       show_year: typeof prefs?.show_year === "boolean" ? prefs.show_year : true,
+      show_copy_count: typeof prefs?.show_copy_count === "boolean" ? prefs.show_copy_count : false,
       show_status: typeof prefs?.show_status === "boolean" ? prefs.show_status : true,
       show_placement: typeof prefs?.show_placement === "boolean" ? prefs.show_placement : true,
       show_isbn: typeof prefs?.show_isbn === "boolean" ? prefs.show_isbn : false,
@@ -280,6 +286,7 @@ const save = async () => {
       show_is_hungarian: form.value.show_is_hungarian,
       show_publisher: form.value.show_publisher,
       show_year: form.value.show_year,
+      show_copy_count: form.value.show_copy_count,
       show_status: form.value.show_status,
       show_placement: form.value.show_placement,
       show_isbn: form.value.show_isbn,

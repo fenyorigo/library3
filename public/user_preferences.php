@@ -156,6 +156,7 @@ try {
   [$show_is_hungarian_set, $show_is_hungarian] = read_pref_bool($data, 'show_is_hungarian');
   [$show_publisher_set, $show_publisher] = read_pref_bool($data, 'show_publisher');
   [$show_year_set, $show_year] = read_pref_bool($data, 'show_year');
+  [$show_copy_count_set, $show_copy_count] = read_pref_bool($data, 'show_copy_count');
   [$show_status_set, $show_status] = read_pref_bool($data, 'show_status');
   [$show_placement_set, $show_placement] = read_pref_bool($data, 'show_placement');
   [$show_isbn_set, $show_isbn] = read_pref_bool($data, 'show_isbn');
@@ -206,11 +207,11 @@ try {
   $sql = "INSERT INTO UserPreferences
           (user_id, logo_path, bg_color, fg_color, text_size, per_page,
           show_cover, show_subtitle, show_series, show_is_hungarian, show_publisher,
-          show_year, show_status, show_placement, show_isbn, show_loaned_to,
+          show_year, show_copy_count, show_status, show_placement, show_isbn, show_loaned_to,
            show_loaned_date, show_subjects, show_notes, updated_at)
           VALUES (:uid, :logo_ins, :bg_ins, :fg_ins, :ts_ins, :per_ins,
            :show_cover_ins, :show_subtitle_ins, :show_series_ins, :show_is_hungarian_ins, :show_publisher_ins,
-           :show_year_ins, :show_status_ins, :show_placement_ins, :show_isbn_ins, :show_loaned_to_ins,
+           :show_year_ins, :show_copy_count_ins, :show_status_ins, :show_placement_ins, :show_isbn_ins, :show_loaned_to_ins,
            :show_loaned_date_ins, :show_subjects_ins, :show_notes_ins, NOW())
           ON DUPLICATE KEY UPDATE
             logo_path = IF(:logo_set, :logo_upd, logo_path),
@@ -224,6 +225,7 @@ try {
             show_is_hungarian = IF(:show_is_hungarian_set, :show_is_hungarian_upd, show_is_hungarian),
             show_publisher = IF(:show_publisher_set, :show_publisher_upd, show_publisher),
             show_year = IF(:show_year_set, :show_year_upd, show_year),
+            show_copy_count = IF(:show_copy_count_set, :show_copy_count_upd, show_copy_count),
             show_status = IF(:show_status_set, :show_status_upd, show_status),
             show_placement = IF(:show_placement_set, :show_placement_upd, show_placement),
             show_isbn = IF(:show_isbn_set, :show_isbn_upd, show_isbn),
@@ -243,6 +245,7 @@ try {
     'show_is_hungarian' => 1,
     'show_publisher' => 1,
     'show_year' => 1,
+    'show_copy_count' => 0,
     'show_status' => 1,
     'show_placement' => 1,
     'show_isbn' => 0,
@@ -266,6 +269,7 @@ try {
     ':show_is_hungarian_ins' => $show_is_hungarian ?? $defaults['show_is_hungarian'],
     ':show_publisher_ins' => $show_publisher ?? $defaults['show_publisher'],
     ':show_year_ins' => $show_year ?? $defaults['show_year'],
+    ':show_copy_count_ins' => $show_copy_count ?? $defaults['show_copy_count'],
     ':show_status_ins' => $show_status ?? $defaults['show_status'],
     ':show_placement_ins' => $show_placement ?? $defaults['show_placement'],
     ':show_isbn_ins' => $show_isbn ?? $defaults['show_isbn'],
@@ -295,6 +299,8 @@ try {
     ':show_publisher_upd' => $show_publisher,
     ':show_year_set' => $show_year_set ? 1 : 0,
     ':show_year_upd' => $show_year,
+    ':show_copy_count_set' => $show_copy_count_set ? 1 : 0,
+    ':show_copy_count_upd' => $show_copy_count,
     ':show_status_set' => $show_status_set ? 1 : 0,
     ':show_status_upd' => $show_status,
     ':show_placement_set' => $show_placement_set ? 1 : 0,

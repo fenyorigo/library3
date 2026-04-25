@@ -82,6 +82,8 @@ try {
     $isbn     = N($d['isbn'] ?? null);
     $lccn     = N($d['lccn'] ?? null);
     $notes    = N($d['notes'] ?? null);
+    $copy_count = (int)($d['copy_count'] ?? 1);
+    if ($copy_count < 1) $copy_count = 1;
     $loaned_to = N($d['loaned_to'] ?? null);
     $loaned_date = N($d['loaned_date'] ?? null);
     if ($loaned_to === null) {
@@ -120,15 +122,16 @@ try {
     // INSERT — matches your schema (no added_date; no back_image)
     $stmt = $pdo->prepare("
         INSERT INTO Books
-          (title, subtitle, series, publisher_id, year_published,
+          (title, subtitle, series, copy_count, publisher_id, year_published,
            isbn, lccn, notes, cover_image, cover_thumb, placement_id,
            loaned_to, loaned_date)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
     $stmt->execute([
         $title,
         $subtitle,
         $series,
+        $copy_count,
         $publisher_id,
         $year_published,
         $isbn,

@@ -69,6 +69,7 @@ try {
     SELECT
       b.book_id AS id,
       b.title, b.subtitle, b.series,
+      b.copy_count,
       b.year_published, b.isbn, b.lccn, b.notes,
       b.loaned_to, b.loaned_date,
       b.cover_image,
@@ -92,7 +93,7 @@ try {
 }
 
 // ---------- write temp JSON/CSV ----------
-$csv_books_header     = ['id','title','subtitle','series','year_published','isbn','lccn','notes','publisher','loaned_to','loaned_date','bookcase_no','shelf_no','cover_image','cover_file']; // cover_file last
+$csv_books_header     = ['id','title','subtitle','series','copy_count','year_published','isbn','lccn','notes','publisher','loaned_to','loaned_date','bookcase_no','shelf_no','cover_image','cover_file']; // cover_file last
 $csv_books_rows       = array_map(function($b){
     // cover_file is filename (last segment) or empty
     $cover_file = '';
@@ -105,6 +106,7 @@ $csv_books_rows       = array_map(function($b){
         'title'          => $b['title'],
         'subtitle'       => $b['subtitle'],
         'series'         => $b['series'],
+        'copy_count'     => $b['copy_count'] ?? 1,
         'year_published' => $b['year_published'],
         'isbn'           => $b['isbn'],
         'lccn'           => $b['lccn'],

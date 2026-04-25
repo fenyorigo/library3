@@ -97,6 +97,12 @@
             </button>
           </th>
 
+          <th v-if="columns.show_copy_count" class="w-year" :aria-sort="ariaSort('copy_count')">
+            <button class="th-btn" @click.prevent="toggleSort('copy_count')">
+              <span>Copies</span><span class="chev">{{ chevron('copy_count') }}</span>
+            </button>
+          </th>
+
           <th v-if="columns.show_status" class="w-status" :aria-sort="ariaSort('status')">
             <button class="th-btn" @click.prevent="toggleSort('status')">
               <span>Status</span><span class="chev">{{ chevron('status') }}</span>
@@ -177,6 +183,7 @@
           </td>
           <td v-if="columns.show_publisher" class="publisher-cell">{{ b.publisher || '—' }}</td>
           <td v-if="columns.show_year">{{ b.year_published || '—' }}</td>
+          <td v-if="columns.show_copy_count">{{ b.copy_count || 1 }}</td>
 
           <td v-if="columns.show_status" class="status-cell">{{ b.loan_status || '—' }}</td>
 
@@ -283,6 +290,7 @@ const columnDefaults = {
   show_is_hungarian: true,
   show_publisher: true,
   show_year: true,
+  show_copy_count: false,
   show_status: true,
   show_placement: true,
   show_isbn: false,

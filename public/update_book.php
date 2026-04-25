@@ -37,6 +37,7 @@ try {
         'title',
         'subtitle',
         'series',
+        'copy_count',
         'year_published',
         'isbn',
         'lccn',
@@ -70,6 +71,9 @@ try {
                 // allow null or int
                 $val = $d[$col];
                 $val = ($val === '' || $val === null) ? null : (int)$val;
+            } elseif ($col === 'copy_count') {
+                $val = (int)$d[$col];
+                if ($val < 1) $val = 1;
             } elseif ($col === 'loaned_date') {
                 $val = N($d[$col]);
                 if (!$is_valid_date($val)) {

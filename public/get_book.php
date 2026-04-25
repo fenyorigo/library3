@@ -21,6 +21,7 @@ try {
     SELECT
       b.book_id AS id,
       b.title, b.subtitle, b.series,
+      b.copy_count,
       b.year_published,
       b.isbn, b.lccn,
       b.notes,

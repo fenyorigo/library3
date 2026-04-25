@@ -164,6 +164,7 @@ $sql = "
 SELECT
   b.book_id AS id,
   b.title, b.subtitle, b.series,
+  b.copy_count,
   b.year_published,
   b.isbn, b.lccn,
   b.notes,
@@ -228,7 +229,7 @@ if ($out === false) {
 /* Fix PHP 8.1+ deprecation: explicitly pass escape char */
 $bytes_written = 0;
 $bytes = fputcsv($out, [
-    'ID', 'Title', 'Subtitle', 'Series', 'Year', 'ISBN', 'LCCN', 'Notes',
+    'ID', 'Title', 'Subtitle', 'Series', 'Copy Count', 'Year', 'ISBN', 'LCCN', 'Notes',
     'Publisher', 'Authors', 'Subjects', 'Loaned To', 'Loaned Date',
     'Bookcase', 'Shelf', 'Cover Image', 'Cover Filename'
 ], ',', '"', "\\");
@@ -242,6 +243,7 @@ foreach ($rows as $r) {
         $r['title'],
         $r['subtitle'],
         $r['series'],
+        $r['copy_count'] ?? 1,
         $r['year_published'],
         $r['isbn'],
         $r['lccn'],

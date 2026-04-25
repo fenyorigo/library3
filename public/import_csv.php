@@ -101,7 +101,7 @@ try {
     $semi_norm = array_map($normalize_header, $semi_fields);
 
     $export_keys = [
-        'id','title','subtitle','series','year','isbn','lccn','notes','publisher','authors','subjects',
+        'id','title','subtitle','series','copy_count','year','isbn','lccn','notes','publisher','authors','subjects',
         'loaned_to','loaned_date','bookcase','shelf','cover_image','cover_filename'
     ];
     $legacy_keys = ['title','subtitle','year_published','authors'];
@@ -207,6 +207,7 @@ try {
             $loaned_date = null;
             $subjects_csv = null;
             $cover_filename = null;
+            $copy_count = 1;
         } else {
             $id_in = (int)($data['id'] ?? 0);
             if ($id_in <= 0) $id_in = null;
@@ -221,6 +222,8 @@ try {
             $subjects_csv = N($data['subjects'] ?? null);
             $loaned_to = N($data['loaned_to'] ?? null);
             $loaned_date = N($data['loaned_date'] ?? null);
+            $copy_count = (int)($data['copy_count'] ?? 1);
+            if ($copy_count < 1) $copy_count = 1;
             if ($loaned_to === null) {
                 $loaned_date = null;
             }
@@ -268,16 +271,17 @@ try {
             if ($id_in !== null && !$id_conflict) {
                 $stmt = $pdo->prepare("
         INSERT INTO Books
-          (book_id, title, subtitle, series, publisher_id, year_published,
+          (book_id, title, subtitle, series, copy_count, publisher_id, year_published,
            isbn, lccn, notes, cover_image, cover_thumb, placement_id,
            loaned_to, loaned_date)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ");
                 $stmt->execute([
                     $id_in,
                     $title,
                     $subtitle,
                     $series,
+                    $copy_count,
                     $publisher_id,
                     $year,
                     $isbn,
@@ -293,15 +297,16 @@ try {
             } else {
                 $stmt = $pdo->prepare("
         INSERT INTO Books
-          (title, subtitle, series, publisher_id, year_published,
+          (title, subtitle, series, copy_count, publisher_id, year_published,
            isbn, lccn, notes, cover_image, cover_thumb, placement_id,
            loaned_to, loaned_date)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ");
                 $stmt->execute([
                     $title,
                     $subtitle,
                     $series,
+                    $copy_count,
                     $publisher_id,
                     $year,
                     $isbn,

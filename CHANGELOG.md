@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.5.0] - 2026-04-25
+### Added
+- Duplicate merge-as-copies workflow with admin-only `MERGE` confirmation and atomic backend transaction
+- `Books.copy_count` field (default `1`) plus duplicate review system status `MERGED`
+- Admin merge audit logging and post-commit duplicate cover/thumb cleanup (reference-safe)
+
+### Changed
+- Duplicate candidates UI now supports per-group master selection and destructive merge confirmation modal
+- `MERGED` duplicate groups are system-managed/read-only (not selectable in review dropdown)
+- Catalog exports/imports now include `copy_count` (older imports default to `1`)
+- Book list/detail/edit flows include `copy_count` display/support
+- Added migration SQL for schema `2.3.5`
+
 ## [2.4.3] - 2026-04-25
 ### Added
 - Admin-only catalog purge from frontend (DB catalog tables + cover/thumb uploads wipe) with audit logging
