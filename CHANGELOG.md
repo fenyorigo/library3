@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.6.1] - 2026-04-26
+### Added
+- App-local PHP runtime limits via `public/.user.ini` for large import uploads and longer execution/input timeouts
+
+### Changed
+- Selected export naming now reports logical cover count (book covers only), excluding thumbnails and default cover assets
+- Import/Export UI wording updated to `Import books` and `Export selected books (CSV + covers)`
+- Selected export now also includes `uploads/default_cover.jpg` if present (in addition to `uploads/default-cover.jpg`)
+- Catalog purge now preserves `uploads/default-cover.jpg` / `uploads/default_cover.jpg`
+
+### Fixed
+- Import modal now handles upstream `504 Gateway Timeout` responses gracefully for long-running restore requests
+- Purge result reporting now separates cover files and thumbnail files to avoid misleading doubled cover counts
+- Full backup ZIP now includes non-JPG covers (e.g. PNG/WEBP/GIF) using DB-referenced cover paths instead of `cover.jpg`-only collection
+
 ## [2.6.0] - 2026-04-26
 ### Added
 - Unified admin export: `Export selected (CSV + covers)` creates one ZIP bundle with shared timestamp and current filter support

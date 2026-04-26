@@ -64,7 +64,7 @@ function add_if_exists(ZipArchive $zip, string $abs, string $in_zip): void {
 
 // ---------- data pulls ----------
 try {
-    // Books (include only cover_image; also compute cover_file for CSV last column)
+    // Books (include cover references; compute cover_file for CSV last column)
     $books_sql = "
     SELECT
       b.book_id AS id,
@@ -73,7 +73,7 @@ try {
       b.year_published, b.isbn, b.lccn, b.notes,
       b.loaned_to, b.loaned_date,
       b.cover_image,
-      b.cover_image AS cover_thumb,
+      b.cover_thumb,
       p.name AS publisher,
       pl.bookcase_no, pl.shelf_no
     FROM Books b
@@ -194,7 +194,7 @@ Includes:
 - authors.csv, publishers.csv, subjects.csv
 - Books_Authors.csv (with author_ord), Books_Subjects.csv
 - uploads/default-cover.jpg (if present)
-- uploads/<id>/cover.jpg for any book that has a cover
+- uploads/<id>/cover.* and cover-thumb.* files referenced by exported rows
 
 Restore notes:
 - CSVs can be staged and merged using your existing SQL pipeline.
@@ -212,14 +212,28 @@ $zip->addFile($csv_bs_path,         'data/Books_Subjects.csv');
 
 // cover images (only existing ones)
 $uploads_dir = realpath(__DIR__ . '/uploads') ?: (__DIR__ . '/uploads');
-add_if_exists($zip, $uploads_dir . '/default-cover.jpg', 'uploads/default-cover.jpg');
-
+$cover_paths = [];
+$cover_paths['uploads/default-cover.jpg'] = true;
+$cover_paths['uploads/default_cover.jpg'] = true;
 foreach ($books as $r) {
     $id = (int)$r['id'];
-    $abs = $uploads_dir . '/' . $id . '/cover.jpg';
-    if (is_file($abs)) {
-        $zip->addFile($abs, "uploads/{$id}/cover.jpg");
+    if ($id > 0) {
+        foreach (['jpg', 'jpeg', 'png', 'webp', 'gif'] as $ext) {
+            $cover_paths["uploads/{$id}/cover.{$ext}"] = true;
+            $cover_paths["uploads/{$id}/cover-thumb.{$ext}"] = true;
+        }
     }
+
+    $ci = trim((string)($r['cover_image'] ?? ''));
+    $ct = trim((string)($r['cover_thumb'] ?? ''));
+    if ($ci !== '' && strpos($ci, 'uploads/') === 0) $cover_paths[$ci] = true;
+    if ($ct !== '' && strpos($ct, 'uploads/') === 0) $cover_paths[$ct] = true;
+}
+foreach (array_keys($cover_paths) as $rel) {
+    $rel_clean = ltrim(str_replace('\\', '/', $rel), '/');
+    if (strpos($rel_clean, 'uploads/') !== 0) continue;
+    $abs = __DIR__ . '/' . $rel_clean;
+    add_if_exists($zip, $abs, $rel_clean);
 }
 
 // --- Build sha256sums.txt for everything we package ---
@@ -242,20 +256,12 @@ $sha($csv_subjects_path,   'data/subjects.csv');
 $sha($csv_ba_path,         'data/Books_Authors.csv');
 $sha($csv_bs_path,         'data/Books_Subjects.csv');
 
-// and the images we added (same loop you already use to add files)
-$uploads_dir = realpath(__DIR__ . '/uploads') ?: (__DIR__ . '/uploads');
-$default_cover = $uploads_dir . '/default-cover.jpg';
-if (is_file($default_cover)) {
-    $sha($default_cover, 'uploads/default-cover.jpg');
-}
-foreach ($books as $r) {
-    $id = (int)$r['id'];
-    if (!empty($r['cover_image'])) {
-        $abs = $uploads_dir . '/' . $id . '/cover.jpg';
-        if (is_file($abs)) {
-            $sha($abs, "uploads/{$id}/cover.jpg");
-        }
-    }
+// and the images we added
+foreach (array_keys($cover_paths) as $rel) {
+    $rel_clean = ltrim(str_replace('\\', '/', $rel), '/');
+    if (strpos($rel_clean, 'uploads/') !== 0) continue;
+    $abs = __DIR__ . '/' . $rel_clean;
+    $sha($abs, $rel_clean);
 }
 
 // finally add sha256s.txt to ZIP

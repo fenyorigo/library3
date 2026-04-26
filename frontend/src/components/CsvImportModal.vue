@@ -1,8 +1,8 @@
 <template>
   <div class="overlay" @click.self="$emit('close')">
-    <div class="modal" role="dialog" aria-modal="true" aria-label="Import CSV / Bundle">
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Import books">
       <header class="header">
-        <h3>Import CSV / Bundle</h3>
+        <h3>Import books</h3>
         <button class="close" @click="$emit('close')" aria-label="Close">×</button>
       </header>
 
@@ -14,7 +14,7 @@
 
         <p class="muted small">
           Supported formats: <code>books_export.csv</code> or ZIP bundle from
-          <code>Export selected (CSV + covers)</code>.
+          <code>Export selected books (CSV + covers)</code>.
         </p>
 
         <label class="block">Import File
@@ -184,6 +184,17 @@ export default {
           data = {};
         }
         if (!res.ok || data.ok === false) {
+          const gatewayTimeout =
+            res.status === 504
+            || /<title>\s*504 Gateway Timeout/i.test(raw)
+            || /Gateway Timeout/i.test(raw);
+          if (gatewayTimeout && !dry) {
+            alert(
+              "Import request timed out at the gateway (504), but the backend may still be finishing in the background. Wait a bit, then reload the list and verify counts/covers."
+            );
+            this.$emit("imported", { dry_run: false });
+            return;
+          }
           const fallback = raw && raw.trim() ? raw.trim().slice(0, 500) : '';
           throw new Error(data.error || fallback || 'Import failed');
         }

@@ -11,23 +11,34 @@ ini_set('display_errors', '0');
 header('Content-Type: application/json; charset=utf-8');
 
 /**
- * Remove a path recursively and track removed files/dirs.
+ * Remove a path recursively and track removed files/dirs with file classes.
  *
- * @return array{files:int,dirs:int}
+ * @return array{files:int,covers:int,thumbs:int,other_files:int,dirs:int}
  */
 function remove_path_recursive(string $path): array {
     $files = 0;
+    $covers = 0;
+    $thumbs = 0;
+    $other_files = 0;
     $dirs = 0;
 
     if (is_link($path) || is_file($path)) {
         if (@unlink($path)) {
             $files++;
+            $base = strtolower(basename($path));
+            if ((bool)preg_match('/^cover-thumb\.[a-z0-9]+$/', $base)) {
+                $thumbs++;
+            } elseif ((bool)preg_match('/^cover\.[a-z0-9]+$/', $base) || (bool)preg_match('/^default[-_]cover\.[a-z0-9]+$/', $base)) {
+                $covers++;
+            } else {
+                $other_files++;
+            }
         }
-        return ['files' => $files, 'dirs' => $dirs];
+        return ['files' => $files, 'covers' => $covers, 'thumbs' => $thumbs, 'other_files' => $other_files, 'dirs' => $dirs];
     }
 
     if (!is_dir($path)) {
-        return ['files' => $files, 'dirs' => $dirs];
+        return ['files' => $files, 'covers' => $covers, 'thumbs' => $thumbs, 'other_files' => $other_files, 'dirs' => $dirs];
     }
 
     $items = @scandir($path);
@@ -37,6 +48,9 @@ function remove_path_recursive(string $path): array {
             $child = $path . DIRECTORY_SEPARATOR . $item;
             $removed = remove_path_recursive($child);
             $files += $removed['files'];
+            $covers += $removed['covers'];
+            $thumbs += $removed['thumbs'];
+            $other_files += $removed['other_files'];
             $dirs += $removed['dirs'];
         }
     }
@@ -45,16 +59,19 @@ function remove_path_recursive(string $path): array {
         $dirs++;
     }
 
-    return ['files' => $files, 'dirs' => $dirs];
+    return ['files' => $files, 'covers' => $covers, 'thumbs' => $thumbs, 'other_files' => $other_files, 'dirs' => $dirs];
 }
 
 /**
  * Remove all cover/thumbnail files under public/uploads.
  *
- * @return array{files:int,dirs:int}
+ * @return array{files:int,covers:int,thumbs:int,other_files:int,dirs:int}
  */
 function wipe_uploads_content(string $uploads_root): array {
     $removed_files = 0;
+    $removed_covers = 0;
+    $removed_thumbs = 0;
+    $removed_other_files = 0;
     $removed_dirs = 0;
 
     $items = @scandir($uploads_root);
@@ -64,13 +81,24 @@ function wipe_uploads_content(string $uploads_root): array {
 
     foreach ($items as $item) {
         if ($item === '.' || $item === '..') continue;
+        // Keep default placeholder covers during purge.
+        if ($item === 'default-cover.jpg' || $item === 'default_cover.jpg') continue;
         $path = $uploads_root . DIRECTORY_SEPARATOR . $item;
         $removed = remove_path_recursive($path);
         $removed_files += $removed['files'];
+        $removed_covers += $removed['covers'];
+        $removed_thumbs += $removed['thumbs'];
+        $removed_other_files += $removed['other_files'];
         $removed_dirs += $removed['dirs'];
     }
 
-    return ['files' => $removed_files, 'dirs' => $removed_dirs];
+    return [
+        'files' => $removed_files,
+        'covers' => $removed_covers,
+        'thumbs' => $removed_thumbs,
+        'other_files' => $removed_other_files,
+        'dirs' => $removed_dirs,
+    ];
 }
 
 try {
@@ -122,6 +150,9 @@ try {
         'actor_username' => (string)$me['username'],
         'deleted_rows' => $deleted_rows,
         'deleted_upload_files' => $removed_uploads['files'],
+        'deleted_upload_cover_files' => $removed_uploads['covers'],
+        'deleted_upload_thumb_files' => $removed_uploads['thumbs'],
+        'deleted_upload_other_files' => $removed_uploads['other_files'],
         'deleted_upload_dirs' => $removed_uploads['dirs'],
     ]);
 
@@ -130,6 +161,9 @@ try {
         'data' => [
             'deleted_rows' => $deleted_rows,
             'deleted_upload_files' => $removed_uploads['files'],
+            'deleted_upload_cover_files' => $removed_uploads['covers'],
+            'deleted_upload_thumb_files' => $removed_uploads['thumbs'],
+            'deleted_upload_other_files' => $removed_uploads['other_files'],
             'deleted_upload_dirs' => $removed_uploads['dirs'],
         ],
     ]);

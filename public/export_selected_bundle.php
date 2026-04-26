@@ -269,18 +269,28 @@ foreach ($rows as $r) {
     if ($ci !== '' && strpos($ci, 'uploads/') === 0) $cover_paths[$ci] = true;
     if ($ct !== '' && strpos($ct, 'uploads/') === 0) $cover_paths[$ct] = true;
 }
-// Include default cover for portability.
+// Include default cover for portability (both known filenames).
 $cover_paths['uploads/default-cover.jpg'] = true;
+$cover_paths['uploads/default_cover.jpg'] = true;
 
-$cover_count = 0;
+$cover_book_ids = [];
 foreach (array_keys($cover_paths) as $rel) {
     $rel_clean = ltrim(str_replace('\\', '/', $rel), '/');
     if (strpos($rel_clean, 'uploads/') !== 0) continue;
     $abs = __DIR__ . '/' . $rel_clean;
     if (!is_file($abs) || !is_readable($abs)) continue;
     $zip->addFile($abs, $rel_clean);
-    $cover_count++;
+    // Logical cover count for filename: actual book covers only (no thumbs/default).
+    if (
+        preg_match('#^uploads/(\d+)/#', $rel_clean, $m)
+        && strpos($rel_clean, '/cover-thumb.') === false
+        && !preg_match('#^uploads/default[-_]cover\.jpg$#', $rel_clean)
+    ) {
+        $cover_book_ids[(int)$m[1]] = true;
+    }
 }
+// Keep naming intuitive: number of covers, not number of uploaded image files.
+$cover_count = count($cover_book_ids);
 
 $generated_at = (new DateTimeImmutable('now'))->format(DateTimeInterface::ATOM);
 $readme = <<<TXT
@@ -291,7 +301,7 @@ Timestamp key: {$timestamp}
 Includes:
 - data/books.csv (filtered by current search)
 - uploads/... cover files referenced by exported rows
-- uploads/default-cover.jpg (if present)
+- uploads/default-cover.jpg or uploads/default_cover.jpg (if present)
 TXT;
 $zip->addFromString('README.txt', $readme);
 $zip->close();

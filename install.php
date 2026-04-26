@@ -8,13 +8,20 @@ if (php_sapi_name() !== 'cli') {
 }
 
 $root = __DIR__;
-$config_path = $root . '/config.php';
-$template_path = $root . '/config.sample.php';
-$schema_path = $root . '/00-basedata/sql/schema.sql';
 
 function fail(string $message): void {
     fwrite(STDERR, $message . "\n");
     exit(1);
+}
+
+function is_tty_input(): bool {
+    if (function_exists('stream_isatty')) {
+        return @stream_isatty(STDIN);
+    }
+    if (function_exists('posix_isatty')) {
+        return @posix_isatty(STDIN);
+    }
+    return false;
 }
 
 function prompt(string $label, ?string $default = null): string {
@@ -32,16 +39,16 @@ function prompt(string $label, ?string $default = null): string {
 }
 
 function prompt_hidden(string $label): string {
-    if (stripos(PHP_OS, 'WIN') === 0) {
+    if (!is_tty_input() || stripos(PHP_OS, 'WIN') === 0) {
         return prompt($label);
     }
 
     fwrite(STDOUT, $label . ': ');
-    $stty = shell_exec('stty -g');
-    shell_exec('stty -echo');
+    $stty = shell_exec('stty -g 2>/dev/null');
+    shell_exec('stty -echo 2>/dev/null');
     $line = fgets(STDIN);
     if ($stty !== null) {
-        shell_exec('stty ' . $stty);
+        shell_exec('stty ' . trim($stty) . ' 2>/dev/null');
     }
     fwrite(STDOUT, "\n");
 
@@ -49,6 +56,87 @@ function prompt_hidden(string $label): string {
         return '';
     }
     return trim($line);
+}
+
+function prompt_yes_no(string $label, bool $default = false): bool {
+    $def = $default ? 'y' : 'n';
+    $raw = strtolower(trim(prompt($label . ' (y/N)', $def)));
+    return in_array($raw, ['y', 'yes'], true);
+}
+
+function prompt_choice(string $label, array $choices, string $default): string {
+    $allowed = array_values($choices);
+    while (true) {
+        $raw = strtolower(trim(prompt($label . ' [' . implode('/', $allowed) . ']', $default)));
+        if (in_array($raw, $allowed, true)) return $raw;
+        fwrite(STDOUT, "Invalid choice. Allowed: " . implode(', ', $allowed) . "\n");
+    }
+}
+
+function prompt_until_valid(string $label, callable $validator, ?string $default = null, bool $hidden = false): string {
+    while (true) {
+        $value = $hidden ? prompt_hidden($label) : prompt($label, $default);
+        $err = $validator($value);
+        if ($err === null) {
+            return $value;
+        }
+        fwrite(STDOUT, "Invalid value: {$err}\n");
+    }
+}
+
+function command_exists(string $command): bool {
+    $out = [];
+    $code = 1;
+    exec('command -v ' . escapeshellarg($command) . ' 2>/dev/null', $out, $code);
+    return $code === 0 && !empty($out);
+}
+
+function run_cmd(string $command): array {
+    $out = [];
+    $code = 1;
+    exec($command . ' 2>&1', $out, $code);
+    return ['code' => $code, 'output' => trim(implode("\n", $out))];
+}
+
+function check_writable_or_creatable_dir(string $dir): array {
+    $dir = rtrim($dir, "/\\");
+    if ($dir === '') {
+        return ['ok' => false, 'message' => 'Invalid empty directory path'];
+    }
+
+    if (is_dir($dir)) {
+        if (!is_writable($dir)) {
+            return ['ok' => false, 'message' => "{$dir} exists but is not writable"];
+        }
+        return ['ok' => true, 'message' => "{$dir} is writable"];
+    }
+
+    $parent = dirname($dir);
+    if (!is_dir($parent)) {
+        return ['ok' => false, 'message' => "Parent directory does not exist: {$parent}"];
+    }
+    if (!is_writable($parent)) {
+        return ['ok' => false, 'message' => "Parent directory is not writable: {$parent}"];
+    }
+
+    return ['ok' => true, 'message' => "{$dir} can be created (parent writable: {$parent})"];
+}
+
+function ini_size_to_bytes(string $value): int {
+    $v = trim($value);
+    if ($v === '') return 0;
+    $unit = strtolower(substr($v, -1));
+    $num = (float)$v;
+    switch ($unit) {
+        case 'g': return (int)($num * 1024 * 1024 * 1024);
+        case 'm': return (int)($num * 1024 * 1024);
+        case 'k': return (int)($num * 1024);
+        default: return (int)$num;
+    }
+}
+
+function precheck_print(string $status, string $label, string $message): void {
+    fwrite(STDOUT, sprintf("[%s] %s: %s\n", $status, $label, $message));
 }
 
 function password_policy_rules(string $username = ''): array {
@@ -80,13 +168,6 @@ function password_policy_rules(string $username = ''): array {
     ];
 }
 
-function password_policy_messages(string $username = ''): array {
-    return array_map(
-        static fn (array $rule): string => $rule['message'],
-        password_policy_rules($username)
-    );
-}
-
 function password_policy_errors(string $password, string $username = ''): array {
     $errors = [];
     foreach (password_policy_rules($username) as $rule) {
@@ -97,304 +178,587 @@ function password_policy_errors(string $password, string $username = ''): array 
     return $errors;
 }
 
+function password_policy_messages(string $username = ''): array {
+    return array_map(
+        static fn (array $rule): string => $rule['message'],
+        password_policy_rules($username)
+    );
+}
+
+function generate_strong_password(int $length = 24): string {
+    $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*()-_=+[]{}';
+    $max = strlen($alphabet) - 1;
+    $out = '';
+    for ($i = 0; $i < $length; $i++) {
+        $out .= $alphabet[random_int(0, $max)];
+    }
+    return $out;
+}
+
+function detect_default_platform(): string {
+    if (PHP_OS_FAMILY === 'Darwin') return 'mac';
+    return 'fedora';
+}
+
+function installer_platform_profile(string $platform): array {
+    if ($platform === 'mac') {
+        $home = getenv('HOME');
+        $backup_default = (is_string($home) && trim($home) !== '')
+            ? (rtrim($home, "/\\") . '/Backups/library')
+            : '/Users/Shared/Backups/library';
+        return [
+            'name' => 'mac',
+            'config_dir' => '/opt/homebrew/etc/bookcatalog',
+            'backup_default' => $backup_default,
+        ];
+    }
+
+    return [
+        'name' => 'fedora',
+        'config_dir' => '/etc/bookcatalog',
+        'backup_default' => '/var/backups/library',
+    ];
+}
+
+function is_absolute_path(string $path): bool {
+    return $path !== '' && str_starts_with($path, '/');
+}
+
+function validate_port(string $raw): ?string {
+    if (!preg_match('/^\d+$/', $raw)) return 'must be numeric';
+    $port = (int)$raw;
+    if ($port < 1 || $port > 65535) return 'must be between 1 and 65535';
+    return null;
+}
+
+function validate_db_identifier(string $raw, string $field): ?string {
+    if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $raw)) {
+        return "{$field} must match ^[A-Za-z_][A-Za-z0-9_]*$";
+    }
+    return null;
+}
+
+function parse_installer_options(array $args, string $root): array {
+    $opts = [
+        'precheck_only' => false,
+        'install_mode' => false,
+        'platform' => detect_default_platform(),
+        'mysql_host' => '127.0.0.1',
+        'mysql_port' => 3306,
+        'apache_port' => 8443,
+        'target_dir' => $root,
+        'backup_dir' => null,
+    ];
+
+    foreach ($args as $arg) {
+        if ($arg === '--precheck') {
+            $opts['precheck_only'] = true;
+            continue;
+        }
+        if ($arg === '--install') {
+            $opts['install_mode'] = true;
+            continue;
+        }
+        if (str_starts_with($arg, '--platform=')) {
+            $value = strtolower(trim(substr($arg, strlen('--platform='))));
+            if (!in_array($value, ['mac', 'fedora'], true)) {
+                fail("Invalid --platform value '{$value}'. Allowed: mac, fedora");
+            }
+            $opts['platform'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--mysql-host=')) {
+            $value = trim(substr($arg, strlen('--mysql-host=')));
+            if ($value === '') {
+                fail('Invalid --mysql-host value: empty');
+            }
+            $opts['mysql_host'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--mysql-port=')) {
+            $value = trim(substr($arg, strlen('--mysql-port=')));
+            $err = validate_port($value);
+            if ($err !== null) {
+                fail("Invalid --mysql-port value '{$value}': {$err}");
+            }
+            $opts['mysql_port'] = (int)$value;
+            continue;
+        }
+        if (str_starts_with($arg, '--apache-port=')) {
+            $value = trim(substr($arg, strlen('--apache-port=')));
+            $err = validate_port($value);
+            if ($err !== null) {
+                fail("Invalid --apache-port value '{$value}': {$err}");
+            }
+            $opts['apache_port'] = (int)$value;
+            continue;
+        }
+        if (str_starts_with($arg, '--target-dir=')) {
+            $value = trim(substr($arg, strlen('--target-dir=')));
+            if (!is_absolute_path($value)) {
+                fail('Invalid --target-dir value: must be absolute path');
+            }
+            $opts['target_dir'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--backup-dir=')) {
+            $value = trim(substr($arg, strlen('--backup-dir=')));
+            if (!is_absolute_path($value)) {
+                fail('Invalid --backup-dir value: must be absolute path');
+            }
+            $opts['backup_dir'] = $value;
+            continue;
+        }
+        fail('Unknown argument(s). Supported: --precheck, --install, --platform=mac|fedora, --mysql-host=<host>, --mysql-port=<port>, --apache-port=<port>, --target-dir=<path>, --backup-dir=<path>');
+    }
+
+    if ($opts['precheck_only'] && $opts['install_mode']) {
+        fail('Use either --precheck or --install, not both.');
+    }
+
+    return $opts;
+}
+
+function installer_precheck(string $project_root, array $platform_profile, array $opts): array {
+    $results = ['ok' => 0, 'warn' => 0, 'fail' => 0];
+    $emit = static function (string $status, string $label, string $message) use (&$results): void {
+        precheck_print($status, $label, $message);
+        $key = strtolower($status);
+        if (isset($results[$key])) {
+            $results[$key]++;
+        }
+    };
+
+    $emit('OK', 'PHP CLI', sprintf('PHP %s (%s)', PHP_VERSION, PHP_BINARY));
+    if (!is_executable(PHP_BINARY)) {
+        $emit('WARN', 'PHP CLI binary', 'PHP_BINARY is not executable in this environment');
+    }
+
+    $required_ext = ['pdo', 'pdo_mysql', 'mbstring', 'json', 'fileinfo', 'session', 'zip'];
+    foreach ($required_ext as $ext) {
+        if (extension_loaded($ext)) {
+            $emit('OK', "PHP extension {$ext}", 'loaded');
+        } else {
+            $emit('FAIL', "PHP extension {$ext}", 'missing');
+        }
+    }
+
+    $has_imagick = extension_loaded('imagick') || class_exists('Imagick');
+    $has_gd = extension_loaded('gd');
+    if ($has_imagick) {
+        $emit('OK', 'Image backend', 'Imagick available (preferred)');
+    } elseif ($has_gd) {
+        $emit('WARN', 'Image backend', 'GD available (Imagick missing; GD fallback will be used)');
+    } else {
+        $emit('FAIL', 'Image backend', 'Neither Imagick nor GD is available');
+    }
+
+    if (command_exists('mysql')) {
+        $emit('OK', 'MySQL client', 'mysql client found');
+    } else {
+        $emit('FAIL', 'MySQL client', 'mysql client not found in PATH');
+    }
+
+    $mysql_host = (string)($opts['mysql_host'] ?? '127.0.0.1');
+    $mysql_port = (int)($opts['mysql_port'] ?? 3306);
+    $db_detected = false;
+    if (command_exists('mysqladmin')) {
+        $ping = run_cmd('mysqladmin --host=' . escapeshellarg($mysql_host) . ' --port=' . $mysql_port . ' --connect-timeout=2 ping');
+        $po = strtolower($ping['output']);
+        if ($ping['code'] === 0 && str_contains($po, 'alive')) {
+            $emit('OK', 'Database service', "MySQL reachable on {$mysql_host}:{$mysql_port}: " . ($ping['output'] !== '' ? $ping['output'] : 'mysqld is alive'));
+            $db_detected = true;
+        } elseif (str_contains($po, 'access denied')) {
+            $emit('OK', 'Database service', "MySQL reachable on {$mysql_host}:{$mysql_port} (access denied without credentials)");
+            $db_detected = true;
+        }
+    }
+    if (!$db_detected) {
+        $errno = 0;
+        $errstr = '';
+        $sock = @fsockopen($mysql_host, $mysql_port, $errno, $errstr, 1.0);
+        if (is_resource($sock)) {
+            fclose($sock);
+            $emit('WARN', 'Database service', "TCP {$mysql_host}:{$mysql_port} is open, but mysqladmin ping could not confirm readiness");
+        } else {
+            $emit('FAIL', 'Database service', "MySQL is not reachable on {$mysql_host}:{$mysql_port}");
+        }
+    }
+
+    $apache_cmd = null;
+    if (command_exists('apachectl')) {
+        $apache_cmd = 'apachectl';
+    } elseif (command_exists('httpd')) {
+        $apache_cmd = 'httpd';
+    }
+    if ($apache_cmd === null) {
+        $emit('FAIL', 'Apache binary', 'Neither apachectl nor httpd found in PATH');
+    } else {
+        $emit('OK', 'Apache binary', "{$apache_cmd} found");
+    }
+
+    if (command_exists('pgrep')) {
+        $run = run_cmd('pgrep -fl "httpd|apache2"');
+        if ($run['code'] === 0 && $run['output'] !== '') {
+            $emit('OK', 'Apache service', 'running process detected');
+        } else {
+            $emit('WARN', 'Apache service', 'not detected as running');
+        }
+    } else {
+        $emit('WARN', 'Apache service', 'pgrep not available, runtime status not detectable');
+    }
+
+    if ($apache_cmd !== null) {
+        $mods_cmd = $apache_cmd === 'apachectl' ? 'apachectl -M' : 'httpd -M';
+        $mods = run_cmd($mods_cmd);
+        if ($mods['code'] === 0) {
+            $mout = strtolower($mods['output']);
+            $emit(str_contains($mout, 'ssl_module') ? 'OK' : 'FAIL', 'Apache module mod_ssl', str_contains($mout, 'ssl_module') ? 'loaded' : 'not loaded');
+            $emit(str_contains($mout, 'headers_module') ? 'OK' : 'FAIL', 'Apache module mod_headers', str_contains($mout, 'headers_module') ? 'loaded' : 'not loaded');
+        } else {
+            $emit('WARN', 'Apache modules', 'could not detect loaded modules automatically');
+        }
+
+        $test_cmd = $apache_cmd === 'apachectl' ? 'apachectl -t' : 'httpd -t';
+        $cfg = run_cmd($test_cmd);
+        if ($cfg['code'] === 0) {
+            $emit('OK', 'Apache configtest', $cfg['output'] !== '' ? $cfg['output'] : 'Syntax OK');
+        } else {
+            $msg = $cfg['output'] !== '' ? $cfg['output'] : 'configtest failed';
+            $emit('WARN', 'Apache configtest', $msg);
+        }
+    }
+
+    $apache_port = (int)($opts['apache_port'] ?? 8443);
+    $errno = 0;
+    $errstr = '';
+    $sock = @fsockopen('127.0.0.1', $apache_port, $errno, $errstr, 1.0);
+    if (is_resource($sock)) {
+        fclose($sock);
+        $emit('FAIL', 'Apache target port', "Port {$apache_port} is already in use");
+    } else {
+        $emit('OK', 'Apache target port', "Port {$apache_port} is free");
+    }
+
+    $target_dir = rtrim((string)($opts['target_dir'] ?? $project_root), "/\\");
+    $expect_extracted_app = (bool)($opts['expect_extracted_app'] ?? true);
+    $dist_shipped = is_file($target_dir . '/public/dist/index.html');
+    $has_node = command_exists('node');
+    $has_npm = command_exists('npm');
+    if ($has_node) {
+        $node_v = run_cmd('node --version');
+        $emit('OK', 'Node.js', $node_v['output'] !== '' ? $node_v['output'] : 'available');
+    } else {
+        $emit($dist_shipped ? 'WARN' : 'FAIL', 'Node.js', $dist_shipped ? 'missing, but public/dist is already shipped' : 'missing and frontend build is required');
+    }
+    if ($has_npm) {
+        $npm_v = run_cmd('npm --version');
+        $emit('OK', 'npm', $npm_v['output'] !== '' ? $npm_v['output'] : 'available');
+    } else {
+        $emit($dist_shipped ? 'WARN' : 'FAIL', 'npm', $dist_shipped ? 'missing, but public/dist is already shipped' : 'missing and frontend build is required');
+    }
+
+    $target_check = check_writable_or_creatable_dir($target_dir);
+    if ($target_check['ok']) {
+        $emit('OK', 'Filesystem target parent', $target_check['message']);
+    } else {
+        $emit('FAIL', 'Filesystem target parent', $target_check['message']);
+    }
+
+    $public_dir = $target_dir . '/public';
+    $public_check = check_writable_or_creatable_dir($public_dir);
+    if ($public_check['ok']) {
+        $emit('OK', 'Filesystem app public dir', $public_check['message']);
+    } else {
+        $emit('FAIL', 'Filesystem app public dir', $public_check['message']);
+    }
+
+    $schema_path = $target_dir . '/00-basedata/sql/schema.sql';
+    if (is_file($schema_path) && is_readable($schema_path)) {
+        $emit('OK', 'Schema file', "Readable schema found at {$schema_path}");
+    } else {
+        if ($expect_extracted_app) {
+            $emit('FAIL', 'Schema file', "Missing or unreadable {$schema_path}");
+        } else {
+            $emit('WARN', 'Schema file', "Missing or unreadable {$schema_path} (will be validated after extracting application archive)");
+        }
+    }
+
+    $user_ini = $public_dir . '/.user.ini';
+    if (!is_file($user_ini) || !is_readable($user_ini)) {
+        if ($expect_extracted_app) {
+            $emit('FAIL', 'PHP runtime file', "Missing or unreadable {$user_ini}");
+        } else {
+            $emit('WARN', 'PHP runtime file', "Missing or unreadable {$user_ini} (will be validated after extracting application archive)");
+        }
+    } else {
+        $ini = parse_ini_file($user_ini, false, INI_SCANNER_RAW);
+        if (!is_array($ini)) {
+            $emit('FAIL', 'PHP runtime file', "Unable to parse {$user_ini}");
+        } else {
+            $upload_raw = (string)($ini['upload_max_filesize'] ?? '');
+            $post_raw = (string)($ini['post_max_size'] ?? '');
+            $memory_raw = (string)($ini['memory_limit'] ?? '');
+            $max_exec = (int)($ini['max_execution_time'] ?? 0);
+            $max_input = (int)($ini['max_input_time'] ?? 0);
+
+            $upload_ok = ini_size_to_bytes($upload_raw) >= 512 * 1024 * 1024;
+            $post_ok = ini_size_to_bytes($post_raw) >= 540 * 1024 * 1024;
+            $memory_ok = (trim($memory_raw) === '-1') || (ini_size_to_bytes($memory_raw) >= 512 * 1024 * 1024);
+            $exec_ok = $max_exec >= 600;
+            $input_ok = $max_input >= 600;
+
+            if ($upload_ok && $post_ok && $memory_ok && $exec_ok && $input_ok) {
+                $emit('OK', 'PHP runtime file', '.user.ini limits are suitable for large imports');
+            } else {
+                $emit('FAIL', 'PHP runtime file', ".user.ini limits are too low (upload={$upload_raw}, post={$post_raw}, memory={$memory_raw}, max_execution_time={$max_exec}, max_input_time={$max_input})");
+            }
+        }
+    }
+
+    $config_dir = (string)$platform_profile['config_dir'];
+    $config_dir_check = check_writable_or_creatable_dir($config_dir);
+    if ($config_dir_check['ok']) {
+        $emit('OK', 'Filesystem config dir', $config_dir_check['message'] . " [{$config_dir}]");
+    } else {
+        $emit('FAIL', 'Filesystem config dir', $config_dir_check['message'] . " [{$config_dir}]");
+    }
+
+    $backup_dir_opt = (string)($opts['backup_dir'] ?? '');
+    if ($backup_dir_opt !== '') {
+        $backup_dir = $backup_dir_opt;
+    } else {
+        $backup_dir_env = getenv('CATALOG_BACKUP_DIR');
+        $backup_dir = (is_string($backup_dir_env) && trim($backup_dir_env) !== '')
+            ? trim($backup_dir_env)
+            : (string)$platform_profile['backup_default'];
+    }
+    $backup_check = check_writable_or_creatable_dir($backup_dir);
+    if ($backup_check['ok']) {
+        $emit('OK', 'Filesystem backup dir', $backup_check['message'] . " [{$backup_dir}]");
+    } else {
+        $emit('FAIL', 'Filesystem backup dir', $backup_check['message'] . " [{$backup_dir}]");
+    }
+
+    if (PHP_OS_FAMILY === 'Linux') {
+        if (command_exists('firewall-cmd')) {
+            $state = run_cmd('firewall-cmd --state');
+            if ($state['code'] === 0 && trim($state['output']) === 'running') {
+                $emit('OK', 'firewalld', 'running');
+            } else {
+                $msg = $state['output'] !== '' ? $state['output'] : 'not running';
+                $emit('WARN', 'firewalld', $msg);
+            }
+        } else {
+            $emit('WARN', 'firewalld', 'firewall-cmd not found');
+        }
+
+        $emit(command_exists('semanage') ? 'OK' : 'WARN', 'SELinux semanage', command_exists('semanage') ? 'available' : 'not found');
+        $emit(command_exists('restorecon') ? 'OK' : 'WARN', 'SELinux restorecon', command_exists('restorecon') ? 'available' : 'not found');
+
+        if (command_exists('getenforce')) {
+            $se = run_cmd('getenforce');
+            $emit('OK', 'SELinux mode', $se['output'] !== '' ? $se['output'] : 'unknown');
+        } else {
+            $emit('WARN', 'SELinux mode', 'getenforce not found');
+        }
+    }
+
+    fwrite(STDOUT, "\n");
+    fwrite(STDOUT, sprintf("Precheck summary: OK=%d WARN=%d FAIL=%d\n", $results['ok'], $results['warn'], $results['fail']));
+    return $results;
+}
+
+function redact_install_plan(array $plan): array {
+    $copy = $plan;
+    $copy['db']['admin_password'] = '***';
+    $copy['db']['app_password'] = '***';
+    $copy['catalog_admin']['password'] = '***';
+    return $copy;
+}
+
+function ensure_dir_exists(string $dir): void {
+    if (is_dir($dir)) return;
+    if (!mkdir($dir, 0775, true) && !is_dir($dir)) {
+        fail("Failed to create directory: {$dir}");
+    }
+}
+
+function is_dir_empty(string $dir): bool {
+    if (!is_dir($dir)) return true;
+    $items = scandir($dir);
+    if ($items === false) return false;
+    foreach ($items as $item) {
+        if ($item === '.' || $item === '..') continue;
+        return false;
+    }
+    return true;
+}
+
 function split_sql_statements(string $sql): array {
     $statements = [];
     $buffer = '';
-
     foreach (preg_split('/\r?\n/', $sql) as $line) {
         $trimmed = trim($line);
-        if ($trimmed === '' || str_starts_with($trimmed, '--')) {
-            continue;
-        }
+        if ($trimmed === '' || str_starts_with($trimmed, '--')) continue;
         $buffer .= $line . "\n";
         if (preg_match('/;\s*$/', $line)) {
             $statements[] = trim($buffer);
             $buffer = '';
         }
     }
-
-    if (trim($buffer) !== '') {
-        $statements[] = trim($buffer);
-    }
-
+    if (trim($buffer) !== '') $statements[] = trim($buffer);
     return $statements;
 }
 
-function resolve_app_version_label(string $project_root): string {
-    $pkg_path = $project_root . '/frontend/package.json';
+function resolve_app_root(string $target_dir): string {
+    $target_dir = rtrim($target_dir, '/\\');
+    if (is_file($target_dir . '/install.php') && is_dir($target_dir . '/public')) {
+        return $target_dir;
+    }
+    $items = scandir($target_dir);
+    if ($items === false) return $target_dir;
+    $candidates = [];
+    foreach ($items as $item) {
+        if ($item === '.' || $item === '..') continue;
+        $path = $target_dir . '/' . $item;
+        if (!is_dir($path)) continue;
+        if (is_file($path . '/install.php') && is_dir($path . '/public')) {
+            $candidates[] = $path;
+        }
+    }
+    if (count($candidates) === 1) return $candidates[0];
+    return $target_dir;
+}
+
+function extract_archive_to_target(string $archive_path, string $target_dir): string {
+    ensure_dir_exists($target_dir);
+    if (!is_dir_empty($target_dir)) {
+        fail("Target directory is not empty: {$target_dir}. Use extracted mode or choose an empty target directory.");
+    }
+    $cmd = 'tar -xzf ' . escapeshellarg($archive_path) . ' -C ' . escapeshellarg($target_dir);
+    $res = run_cmd($cmd);
+    if (($res['code'] ?? 1) !== 0) {
+        fail('Failed to extract application archive: ' . ($res['output'] ?: 'tar command failed'));
+    }
+    return resolve_app_root($target_dir);
+}
+
+function resolve_app_version_label(string $app_root): string {
+    $pkg_path = rtrim($app_root, '/\\') . '/frontend/package.json';
     $pkg_raw = @file_get_contents($pkg_path);
-    if ($pkg_raw === false) {
-        return 'installer build';
-    }
-
+    if ($pkg_raw === false) return 'installer build';
     $pkg = json_decode($pkg_raw, true);
-    if (!is_array($pkg) || empty($pkg['version'])) {
-        return 'installer build';
-    }
-
+    if (!is_array($pkg) || empty($pkg['version'])) return 'installer build';
     return trim((string)$pkg['version']) . ' (installer build)';
 }
 
-if (file_exists($config_path)) {
-    fail('config.php already exists. Aborting to avoid overwriting credentials.');
-}
+function create_database_and_schema(array $plan, string $app_root): void {
+    $db = $plan['db'];
+    $host = (string)$db['host'];
+    $port = (int)$db['port'];
+    $admin_user = (string)$db['admin_user'];
+    $admin_pass = (string)$db['admin_password'];
+    $dbname = (string)$db['dbname'];
 
-$min_php = 80000;
-if (PHP_VERSION_ID < $min_php) {
-    fail('PHP 8.0+ is required for this installer.');
-}
-
-$required_ext = ['pdo', 'pdo_mysql', 'json', 'mbstring', 'openssl'];
-$missing_ext = [];
-foreach ($required_ext as $ext) {
-    if (!extension_loaded($ext)) {
-        $missing_ext[] = $ext;
-    }
-}
-if ($missing_ext) {
-    fail('Missing required PHP extensions: ' . implode(', ', $missing_ext));
-}
-
-function clean_directory(string $dir): void {
-    $items = scandir($dir);
-    if ($items === false) {
-        fail("Unable to read directory: {$dir}");
-    }
-    foreach ($items as $item) {
-        if ($item === '.' || $item === '..') continue;
-        $path = $dir . '/' . $item;
-        if (is_dir($path)) {
-            clean_directory($path);
-            if (!rmdir($path)) {
-                fail("Failed to remove directory: {$path}");
-            }
-        } else {
-            if (!unlink($path)) {
-                fail("Failed to remove file: {$path}");
-            }
-        }
-    }
-}
-
-function ensure_writable_dir(string $dir): void {
-    if (!is_dir($dir)) {
-        if (!mkdir($dir, 0775, true)) {
-            fail("Failed to create directory: {$dir}");
-        }
-    } else {
-        $confirm = strtolower(prompt("Directory {$dir} exists. Clean contents? (y/N)", 'n'));
-        if (in_array($confirm, ['y', 'yes'], true)) {
-            clean_directory($dir);
-        }
-    }
-
-    if (!is_writable($dir)) {
-        fail("Directory is not writable: {$dir}");
-    }
-}
-
-$writable_dirs = [
-    $root . '/public/uploads',
-    $root . '/public/user-assets',
-];
-foreach ($writable_dirs as $dir) {
-    ensure_writable_dir($dir);
-}
-
-if (!is_writable($root)) {
-    fail('Project root is not writable; cannot create config.php.');
-}
-
-if (!is_readable($template_path)) {
-    fail('Missing config.sample.php template.');
-}
-
-if (!is_readable($schema_path)) {
-    fail('Missing schema.sql at 00-basedata/sql/schema.sql.');
-}
-
-$host = prompt('MySQL host', '127.0.0.1');
-$port = prompt('MySQL port', '3306');
-$admin_user = prompt('MySQL admin user');
-$admin_pass = prompt_hidden('MySQL admin password');
-
-if ($admin_user === '') {
-    fail('MySQL admin user is required.');
-}
-
-try {
-    $admin_dsn = sprintf('mysql:host=%s;port=%d;charset=utf8mb4', $host, (int)$port);
+    $admin_dsn = sprintf('mysql:host=%s;port=%d;charset=utf8mb4', $host, $port);
     $admin_pdo = new PDO($admin_dsn, $admin_user, $admin_pass, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
-} catch (Throwable $e) {
-    fail('Unable to connect to MySQL with admin credentials: ' . $e->getMessage());
-}
 
-$dbname = prompt('Catalog database name', 'books');
-if (!preg_match('/^[A-Za-z0-9_]+$/', $dbname)) {
-    fail('Database name must contain only letters, numbers, and underscores.');
-}
+    $admin_pdo->exec("CREATE DATABASE IF NOT EXISTS `{$dbname}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
 
-$st = $admin_pdo->prepare('SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?');
-$st->execute([$dbname]);
-$exists = (bool)$st->fetchColumn();
-
-if ($exists) {
-    fwrite(STDOUT, "Database '{$dbname}' already exists.\n");
-    $reuse = strtolower(prompt('Reuse existing database? (y/N)', 'n'));
-    if (!in_array($reuse, ['y', 'yes'], true)) {
-        fail('Aborting at user request.');
-    }
-} else {
-    try {
-        $admin_pdo->exec("CREATE DATABASE IF NOT EXISTS `{$dbname}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-    } catch (Throwable $e) {
-        fail('Failed to create database: ' . $e->getMessage());
-    }
-}
-
-try {
-    $db_dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $host, (int)$port, $dbname);
+    $db_dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $host, $port, $dbname);
     $db_pdo = new PDO($db_dsn, $admin_user, $admin_pass, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
     ]);
-} catch (Throwable $e) {
-    fail('Unable to connect to the target database: ' . $e->getMessage());
-}
 
-$schema_sql = file_get_contents($schema_path);
-if ($schema_sql === false) {
-    fail('Failed to read schema.sql.');
-}
-
-try {
-    $statements = split_sql_statements($schema_sql);
-    foreach ($statements as $stmt) {
-        if ($stmt !== '') {
-            $db_pdo->exec($stmt);
-        }
+    $schema_path = rtrim($app_root, '/\\') . '/00-basedata/sql/schema.sql';
+    $schema_sql = @file_get_contents($schema_path);
+    if ($schema_sql === false) {
+        fail("Failed to read schema file: {$schema_path}");
     }
-} catch (Throwable $e) {
-    fail('Schema creation failed: ' . $e->getMessage());
-}
+    foreach (split_sql_statements($schema_sql) as $stmt) {
+        if ($stmt !== '') $db_pdo->exec($stmt);
+    }
 
-$app_version = resolve_app_version_label($root);
-$schema_version = '2.2.0';
-$install_date = gmdate('c');
-
-try {
-    $info_stmt = $db_pdo->prepare(
+    $app_version = resolve_app_version_label($app_root);
+    $schema_version = '2.3.5';
+    $install_date = gmdate('c');
+    $st = $db_pdo->prepare(
         "INSERT INTO SystemInfo (key_name, value) VALUES (?, ?)\n"
         . "ON DUPLICATE KEY UPDATE value = VALUES(value)"
     );
-    $info_stmt->execute(['app_version', $app_version]);
-    $info_stmt->execute(['schema_version', $schema_version]);
-    $info_stmt->execute(['install_date', $install_date]);
-} catch (Throwable $e) {
-    fail('Failed to populate SystemInfo: ' . $e->getMessage());
+    $st->execute(['app_version', $app_version]);
+    $st->execute(['schema_version', $schema_version]);
+    $st->execute(['install_date', $install_date]);
 }
 
-$use_dedicated = strtolower(prompt('Create dedicated DB user for BookCatalog? (Y/n)', 'y'));
-$create_dedicated = !in_array($use_dedicated, ['n', 'no'], true);
+function create_or_update_app_db_user(array $plan): void {
+    $db = $plan['db'];
+    $host = (string)$db['host'];
+    $port = (int)$db['port'];
+    $admin_user = (string)$db['admin_user'];
+    $admin_pass = (string)$db['admin_password'];
+    $dbname = (string)$db['dbname'];
+    $app_user = (string)$db['app_user'];
+    $app_pass = (string)$db['app_password'];
 
-if ($create_dedicated) {
-    $app_db_user = prompt('BookCatalog DB username', 'bookcatalog_app');
-    if ($app_db_user === '') {
-        fail('Database username cannot be empty.');
-    }
+    $admin_dsn = sprintf('mysql:host=%s;port=%d;charset=utf8mb4', $host, $port);
+    $pdo = new PDO($admin_dsn, $admin_user, $admin_pass, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    ]);
 
-    $app_db_host = prompt('BookCatalog DB user host', $host);
-    fwrite(STDOUT, "BookCatalog DB user password requirements:\n");
-    foreach (password_policy_messages($app_db_user) as $message) {
-        fwrite(STDOUT, "- {$message}\n");
+    $user_q = $pdo->quote($app_user);
+    $pass_q = $pdo->quote($app_pass);
+    $hosts = array_unique([$host, '127.0.0.1', 'localhost']);
+    foreach ($hosts as $h) {
+        $h_q = $pdo->quote($h);
+        $pdo->exec("CREATE USER IF NOT EXISTS {$user_q}@{$h_q} IDENTIFIED BY {$pass_q}");
+        $pdo->exec("GRANT SELECT, INSERT, UPDATE, DELETE ON `{$dbname}`.* TO {$user_q}@{$h_q}");
     }
-    fwrite(STDOUT, "\n");
-    $app_db_pass = prompt_hidden('BookCatalog DB user password');
-    $app_db_pass_confirm = prompt_hidden('Confirm BookCatalog DB user password');
-    if ($app_db_pass === '' || $app_db_pass !== $app_db_pass_confirm) {
-        fail('DB user passwords do not match or are empty.');
-    }
-
-    try {
-        $user_q = $admin_pdo->quote($app_db_user);
-        $pass_q = $admin_pdo->quote($app_db_pass);
-        $user_hosts = array_unique([$app_db_host, $host]);
-        foreach ($user_hosts as $user_host) {
-            $host_q = $admin_pdo->quote($user_host);
-            $admin_pdo->exec("CREATE USER IF NOT EXISTS {$user_q}@{$host_q} IDENTIFIED BY {$pass_q}");
-            $admin_pdo->exec(
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON `{$dbname}`.* TO {$user_q}@{$host_q}"
-            );
-        }
-        $admin_pdo->exec('FLUSH PRIVILEGES');
-    } catch (Throwable $e) {
-        fail('Failed to create/grant DB user: ' . $e->getMessage());
-    }
-} else {
-    fwrite(STDOUT, "Warning: Using admin credentials for the app is not recommended.\n");
-    $app_db_user = $admin_user;
-    $app_db_pass = $admin_pass;
+    $pdo->exec('FLUSH PRIVILEGES');
 }
 
-$admin_username = '';
-while ($admin_username === '') {
-    $admin_username = prompt('Initial catalog admin username');
-    if ($admin_username === '') {
-        fwrite(STDOUT, "Catalog admin username is required.\n");
-        continue;
+function create_or_update_catalog_admin(array $plan): void {
+    $db = $plan['db'];
+    $host = (string)$db['host'];
+    $port = (int)$db['port'];
+    $dbname = (string)$db['dbname'];
+    $user = (string)$db['app_user'];
+    $pass = (string)$db['app_password'];
+    $admin_user = (string)$plan['catalog_admin']['username'];
+    $admin_pass = (string)$plan['catalog_admin']['password'];
+
+    $hash = password_hash($admin_pass, PASSWORD_DEFAULT);
+    if ($hash === false) fail('Failed to hash catalog admin password.');
+
+    $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $host, $port, $dbname);
+    $pdo = new PDO($dsn, $user, $pass, [
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    ]);
+
+    $sel = $pdo->prepare('SELECT user_id FROM Users WHERE username = ? LIMIT 1');
+    $sel->execute([$admin_user]);
+    $uid = (int)($sel->fetchColumn() ?: 0);
+
+    if ($uid > 0) {
+        $up = $pdo->prepare('UPDATE Users SET password_hash=?, role=\'admin\', is_active=1, force_password_change=0 WHERE user_id=?');
+        $up->execute([$hash, $uid]);
+    } else {
+        $ins = $pdo->prepare(
+            'INSERT INTO Users (username, password_hash, role, is_active, force_password_change, created_at) '
+            . 'VALUES (?, ?, \'admin\', 1, 0, NOW())'
+        );
+        $ins->execute([$admin_user, $hash]);
+        $uid = (int)$pdo->lastInsertId();
     }
 
-    $check = $db_pdo->prepare('SELECT user_id FROM Users WHERE username = ? LIMIT 1');
-    $check->execute([$admin_username]);
-    if ($check->fetchColumn()) {
-        fwrite(STDOUT, "That username already exists. Choose another.\n");
-        $admin_username = '';
-    }
-}
-
-$admin_password = '';
-fwrite(STDOUT, "Password requirements:\n");
-foreach (password_policy_messages($admin_username) as $message) {
-    fwrite(STDOUT, "- {$message}\n");
-}
-fwrite(STDOUT, "\n");
-while ($admin_password === '') {
-    $admin_password = prompt_hidden('Initial catalog admin password');
-    $admin_password_confirm = prompt_hidden('Confirm catalog admin password');
-
-    if ($admin_password === '' || $admin_password !== $admin_password_confirm) {
-        fwrite(STDOUT, "Passwords do not match.\n");
-        $admin_password = '';
-        continue;
-    }
-
-    $errors = password_policy_errors($admin_password, $admin_username);
-    if ($errors) {
-        fwrite(STDOUT, "Password policy errors:\n");
-        foreach ($errors as $err) {
-            fwrite(STDOUT, "- {$err}\n");
-        }
-        $admin_password = '';
-    }
-}
-
-$hash = password_hash($admin_password, PASSWORD_DEFAULT);
-if ($hash === false) {
-    fail('Failed to hash admin password.');
-}
-
-try {
-    $insert_user = $db_pdo->prepare(
-        'INSERT INTO Users (username, password_hash, role, is_active, force_password_change, created_at) '
-        . 'VALUES (?, ?, \'admin\', 1, 0, NOW())'
-    );
-    $insert_user->execute([$admin_username, $hash]);
-    $admin_user_id = (int)$db_pdo->lastInsertId();
-
-    $prefs_insert = $db_pdo->prepare(
+    $prefs = $pdo->prepare(
         'INSERT INTO UserPreferences '
         . '(user_id, logo_path, bg_color, fg_color, text_size, per_page, '
         . 'show_cover, show_subtitle, show_series, show_is_hungarian, show_publisher, '
@@ -403,54 +767,331 @@ try {
         . 'VALUES (?, NULL, NULL, NULL, \'medium\', 25, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, NOW()) '
         . 'ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)'
     );
-    $prefs_insert->execute([$admin_user_id]);
-} catch (Throwable $e) {
-    fail('Failed to create initial admin user: ' . $e->getMessage());
+    $prefs->execute([$uid]);
 }
 
-$template = file_get_contents($template_path);
-if ($template === false) {
-    fail('Unable to read config.sample.php.');
+function write_config_file(array $plan, string $app_root): void {
+    $template_path = rtrim($app_root, '/\\') . '/config.sample.php';
+    $template = @file_get_contents($template_path);
+    if ($template === false) {
+        fail("Missing or unreadable template: {$template_path}");
+    }
+
+    $cfg_path = (string)$plan['config_path'];
+    ensure_dir_exists(dirname($cfg_path));
+    $replacements = [
+        'DB_HOST' => (string)$plan['db']['host'],
+        'DB_PORT' => (string)$plan['db']['port'],
+        'DB_NAME' => (string)$plan['db']['dbname'],
+        'DB_USER' => (string)$plan['db']['app_user'],
+        'DB_PASS' => (string)$plan['db']['app_password'],
+    ];
+    $body = str_replace(array_keys($replacements), array_values($replacements), $template);
+    if (@file_put_contents($cfg_path, $body) === false) {
+        fail("Failed to write config file: {$cfg_path}");
+    }
+    @chmod($cfg_path, 0640);
 }
 
-$replacements = [
-    'DB_HOST' => $host,
-    'DB_PORT' => (string)$port,
-    'DB_NAME' => $dbname,
-    'DB_USER' => $app_db_user,
-    'DB_PASS' => $app_db_pass,
+function write_vhost_snippet(array $plan, string $app_root): string {
+    $docroot = rtrim($app_root, '/\\') . '/public';
+    $server_name = (string)$plan['vhost']['server_name'];
+    $https_port = (int)$plan['vhost']['https_port'];
+    $crt = (string)$plan['vhost']['ssl_cert_path'];
+    $key = (string)$plan['vhost']['ssl_key_path'];
+    $cfg = (string)$plan['config_path'];
+    $backup = (string)$plan['backup_dir'];
+
+    $content = <<<CONF
+<VirtualHost *:{$https_port}>
+  ServerName {$server_name}
+  DocumentRoot "{$docroot}"
+
+  SSLEngine on
+  SSLCertificateFile "{$crt}"
+  SSLCertificateKeyFile "{$key}"
+
+  SetEnv BOOKCATALOG_CONFIG "{$cfg}"
+  SetEnv CATALOG_BACKUP_DIR "{$backup}"
+
+  DirectoryIndex index.php index.html
+
+  <Directory "{$docroot}">
+    AllowOverride All
+    Require all granted
+  </Directory>
+</VirtualHost>
+CONF;
+
+    $out_dir = rtrim($app_root, '/\\') . '/install-output';
+    ensure_dir_exists($out_dir);
+    $out = $out_dir . '/httpd-bookcatalog-' . $https_port . '.conf';
+    if (@file_put_contents($out, $content . "\n") === false) {
+        fail("Failed to write vhost snippet: {$out}");
+    }
+    return $out;
+}
+
+function install_sample_data_if_requested(array $plan): void {
+    $sample = $plan['sample_data'] ?? [];
+    if (!($sample['install'] ?? false)) return;
+    $archive = (string)($sample['archive_path'] ?? '');
+    if ($archive === '' || !is_file($archive)) {
+        fail('Sample data installation requested but archive is missing.');
+    }
+    fwrite(STDOUT, "Sample data install requested: {$archive}\n");
+    fwrite(STDOUT, "Sample data execution is not yet automated in this step; run your sample import workflow after base install.\n");
+}
+
+function collect_install_plan(array $opts, array $platform_profile): array {
+    fwrite(STDOUT, "\n=== BookCatalog Interactive Install Plan ===\n\n");
+
+    $target_dir = prompt_until_valid('Target install directory', static function (string $v): ?string {
+        if (!is_absolute_path($v)) return 'must be an absolute path';
+        return null;
+    }, (string)$opts['target_dir']);
+
+    $default_source_mode = is_file(rtrim($target_dir, '/\\') . '/install.php') ? 'extracted' : 'archive';
+    $source_mode = prompt_choice('Application source mode', ['extracted', 'archive'], $default_source_mode);
+
+    $tar_path = null;
+    if ($source_mode === 'archive') {
+        $home = getenv('HOME') ?: '';
+        $default_tar = '';
+        $candidate_local = rtrim($target_dir, '/\\') . '/bookcatalog.tar.gz';
+        $candidate_dl = $home !== '' ? (rtrim($home, '/\\') . '/Downloads/bookcatalog.tar.gz') : '';
+        if (is_file($candidate_local)) {
+            $default_tar = $candidate_local;
+        } elseif ($candidate_dl !== '' && is_file($candidate_dl)) {
+            $default_tar = $candidate_dl;
+        }
+
+        $tar_path = prompt_until_valid('Application tar.gz path', static function (string $v): ?string {
+            if ($v === '') return 'path is required';
+            if (!is_absolute_path($v)) return 'path must be absolute';
+            if (!is_file($v) || !is_readable($v)) return 'file is missing or not readable';
+            if (!preg_match('/\.(tar\.gz|tgz)$/i', $v)) return 'file should end with .tar.gz or .tgz';
+            return null;
+        }, $default_tar !== '' ? $default_tar : null);
+    }
+
+    $mysql_host = prompt_until_valid('DB host', static fn(string $v): ?string => trim($v) === '' ? 'host is required' : null, (string)$opts['mysql_host']);
+    $mysql_port_s = prompt_until_valid('DB port', static fn(string $v): ?string => validate_port($v), (string)$opts['mysql_port']);
+    $mysql_port = (int)$mysql_port_s;
+
+    $mysql_admin_user = prompt_until_valid('MySQL admin/root username', static fn(string $v): ?string => trim($v) === '' ? 'username is required' : null);
+    $mysql_admin_password = prompt_until_valid('MySQL admin/root password', static fn(string $v): ?string => $v === '' ? 'password is required' : null, null, true);
+
+    $db_name = prompt_until_valid('Catalog DB name', static fn(string $v): ?string => validate_db_identifier($v, 'DB name'), 'books');
+    $app_db_user = prompt_until_valid('App DB user', static fn(string $v): ?string => validate_db_identifier($v, 'DB user'), 'bookcatalog_app');
+
+    $generate_app_db_password = prompt_yes_no('Generate random strong app DB password?', true);
+    if ($generate_app_db_password) {
+        $app_db_password = generate_strong_password(24);
+        fwrite(STDOUT, "App DB password generated (hidden).\n");
+    } else {
+        $app_db_password = '';
+        while ($app_db_password === '') {
+            $p1 = prompt_until_valid('App DB password', static fn(string $v): ?string => $v === '' ? 'password is required' : null, null, true);
+            $p2 = prompt_until_valid('Confirm app DB password', static fn(string $v): ?string => $v === '' ? 'password is required' : null, null, true);
+            if ($p1 !== $p2) {
+                fwrite(STDOUT, "Passwords do not match.\n");
+                continue;
+            }
+            $app_db_password = $p1;
+        }
+    }
+
+    $catalog_admin_user = prompt_until_valid('Catalog admin username', static fn(string $v): ?string => trim($v) === '' ? 'username is required' : null, 'admin');
+    fwrite(STDOUT, "Catalog admin password policy:\n");
+    foreach (password_policy_messages($catalog_admin_user) as $msg) {
+        fwrite(STDOUT, "- {$msg}\n");
+    }
+    $catalog_admin_password = '';
+    while ($catalog_admin_password === '') {
+        $p1 = prompt_until_valid('Catalog admin password', static fn(string $v): ?string => $v === '' ? 'password is required' : null, null, true);
+        $p2 = prompt_until_valid('Confirm catalog admin password', static fn(string $v): ?string => $v === '' ? 'password is required' : null, null, true);
+        if ($p1 !== $p2) {
+            fwrite(STDOUT, "Passwords do not match.\n");
+            continue;
+        }
+        $errs = password_policy_errors($p1, $catalog_admin_user);
+        if ($errs) {
+            fwrite(STDOUT, "Password policy errors:\n");
+            foreach ($errs as $err) fwrite(STDOUT, "- {$err}\n");
+            continue;
+        }
+        $catalog_admin_password = $p1;
+    }
+
+    $backup_default = $opts['backup_dir'] ?? $platform_profile['backup_default'];
+    $backup_dir = prompt_until_valid('Backup directory', static function (string $v): ?string {
+        if (!is_absolute_path($v)) return 'must be an absolute path';
+        return null;
+    }, (string)$backup_default);
+
+    $config_default = rtrim((string)$platform_profile['config_dir'], '/\\') . '/library-config.php';
+    $config_path = prompt_until_valid('Config path', static function (string $v): ?string {
+        if (!is_absolute_path($v)) return 'must be an absolute path';
+        return null;
+    }, $config_default);
+
+    $server_name = prompt_until_valid('ServerName', static fn(string $v): ?string => trim($v) === '' ? 'ServerName is required' : null, 'localhost');
+    $https_port_s = prompt_until_valid('Apache HTTPS port', static fn(string $v): ?string => validate_port($v), (string)$opts['apache_port']);
+    $https_port = (int)$https_port_s;
+
+    $ssl_cert_path = prompt_until_valid('SSL certificate path', static function (string $v): ?string {
+        if (!is_absolute_path($v)) return 'must be absolute path';
+        if (!is_file($v) || !is_readable($v)) return 'file is missing or not readable';
+        return null;
+    }, '/opt/homebrew/etc/httpd/certs/bookcatalogv2.crt');
+
+    $ssl_key_path = prompt_until_valid('SSL key path', static function (string $v): ?string {
+        if (!is_absolute_path($v)) return 'must be absolute path';
+        if (!is_file($v) || !is_readable($v)) return 'file is missing or not readable';
+        return null;
+    }, '/opt/homebrew/etc/httpd/certs/bookcatalogv2.key');
+
+    $install_sample = prompt_yes_no('Install sample data archive?', false);
+    $sample_path = null;
+    if ($install_sample) {
+        $sample_path = prompt_until_valid('Sample data archive path', static function (string $v): ?string {
+            if (!is_absolute_path($v)) return 'must be absolute path';
+            if (!is_file($v) || !is_readable($v)) return 'file is missing or not readable';
+            return null;
+        });
+    }
+
+    return [
+        'mode' => 'install',
+        'platform' => $platform_profile['name'],
+        'application_source_mode' => $source_mode,
+        'application_archive' => $tar_path,
+        'target_dir' => $target_dir,
+        'backup_dir' => $backup_dir,
+        'config_path' => $config_path,
+        'db' => [
+            'host' => $mysql_host,
+            'port' => $mysql_port,
+            'admin_user' => $mysql_admin_user,
+            'admin_password' => $mysql_admin_password,
+            'dbname' => $db_name,
+            'app_user' => $app_db_user,
+            'app_password' => $app_db_password,
+            'app_password_generated' => $generate_app_db_password,
+        ],
+        'catalog_admin' => [
+            'username' => $catalog_admin_user,
+            'password' => $catalog_admin_password,
+        ],
+        'vhost' => [
+            'server_name' => $server_name,
+            'https_port' => $https_port,
+            'ssl_cert_path' => $ssl_cert_path,
+            'ssl_key_path' => $ssl_key_path,
+        ],
+        'sample_data' => [
+            'install' => $install_sample,
+            'archive_path' => $sample_path,
+        ],
+    ];
+}
+
+$argv = $_SERVER['argv'] ?? [];
+$args = array_slice($argv, 1);
+$opts = parse_installer_options($args, $root);
+$platform = (string)$opts['platform'];
+$platform_profile = installer_platform_profile($platform);
+
+if ($opts['precheck_only']) {
+    fwrite(STDOUT, "Installer platform profile: {$platform}\n");
+    fwrite(STDOUT, "Precheck ports: mysql={$opts['mysql_port']}, apache={$opts['apache_port']}\n");
+    fwrite(STDOUT, 'Precheck target dir: ' . ($opts['target_dir'] ?: $root) . "\n");
+    fwrite(STDOUT, 'Precheck backup dir: ' . (($opts['backup_dir'] ?? '') !== '' ? $opts['backup_dir'] : '[env/default]') . "\n");
+    $opts['expect_extracted_app'] = true;
+    $precheck = installer_precheck($root, $platform_profile, $opts);
+    exit(($precheck['fail'] ?? 0) > 0 ? 1 : 0);
+}
+
+$plan = collect_install_plan($opts, $platform_profile);
+
+$precheck_opts = [
+    'mysql_host' => $plan['db']['host'],
+    'mysql_port' => $plan['db']['port'],
+    'apache_port' => $plan['vhost']['https_port'],
+    'target_dir' => $plan['target_dir'],
+    'backup_dir' => $plan['backup_dir'],
+    'expect_extracted_app' => (($plan['application_source_mode'] ?? 'archive') === 'extracted'),
 ];
 
-$config_body = str_replace(array_keys($replacements), array_values($replacements), $template);
-if (file_put_contents($config_path, $config_body) === false) {
-    fail('Failed to write config.php.');
+fwrite(STDOUT, "\nRunning precheck with collected inputs...\n");
+$precheck = installer_precheck($root, $platform_profile, $precheck_opts);
+if (($precheck['fail'] ?? 0) > 0) {
+    fail('Precheck failed for the collected install inputs. Fix FAIL items and rerun.');
 }
 
-@chmod($config_path, 0600);
+$redacted = redact_install_plan($plan);
+fwrite(STDOUT, "\n=== Installation Summary (passwords hidden) ===\n");
+fwrite(STDOUT, json_encode($redacted, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
 
-try {
-    $app_dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4', $host, (int)$port, $dbname);
-    $app_pdo = new PDO($app_dsn, $app_db_user, $app_db_pass, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
-    $table_check = $app_pdo->query("SHOW TABLES LIKE 'Users'")->fetchColumn();
-    if (!$table_check) {
-        fail('Final check failed: Users table is missing.');
-    }
-    $user_check = $app_pdo->prepare('SELECT user_id FROM Users WHERE username = ? LIMIT 1');
-    $user_check->execute([$admin_username]);
-    if (!$user_check->fetchColumn()) {
-        fail('Final check failed: admin user not found.');
-    }
-} catch (Throwable $e) {
-    fail('Final check failed: ' . $e->getMessage());
+$proceed = prompt_yes_no('Proceed with installation?', false);
+if (!$proceed) {
+    fwrite(STDOUT, "Installation cancelled. No changes were made.\n");
+    exit(0);
 }
 
-fwrite(STDOUT, "\nInstallation complete.\n\n");
-fwrite(STDOUT, "Login at:\nhttps://yourhost/\n\n");
-fwrite(STDOUT, "Catalog admin user:\n{$admin_username}\n\n");
-fwrite(STDOUT, "Next steps:\n");
-fwrite(STDOUT, "- cd frontend && npm install && npm run build\n");
-fwrite(STDOUT, "- Configure your Apache/Nginx vhost to point to public/\n");
-fwrite(STDOUT, "- Ensure public/uploads and public/user-assets are writable\n");
+fwrite(STDOUT, "Installation plan confirmed.\n");
+
+$effective_app_root = rtrim((string)$plan['target_dir'], '/\\');
+if (($plan['application_source_mode'] ?? 'archive') === 'archive') {
+    fwrite(STDOUT, "Extracting application archive...\n");
+    $effective_app_root = extract_archive_to_target((string)$plan['application_archive'], (string)$plan['target_dir']);
+    fwrite(STDOUT, "Archive extracted to: {$effective_app_root}\n");
+} else {
+    $effective_app_root = resolve_app_root((string)$plan['target_dir']);
+    fwrite(STDOUT, "Using pre-extracted application at: {$effective_app_root}\n");
+}
+
+fwrite(STDOUT, "Running post-extract precheck...\n");
+$post_precheck_opts = [
+    'mysql_host' => $plan['db']['host'],
+    'mysql_port' => $plan['db']['port'],
+    'apache_port' => $plan['vhost']['https_port'],
+    'target_dir' => $effective_app_root,
+    'backup_dir' => $plan['backup_dir'],
+    'expect_extracted_app' => true,
+];
+$post_precheck = installer_precheck($root, $platform_profile, $post_precheck_opts);
+if (($post_precheck['fail'] ?? 0) > 0) {
+    fail('Post-extract precheck failed. Fix FAIL items and rerun.');
+}
+
+fwrite(STDOUT, "Ensuring filesystem directories...\n");
+ensure_dir_exists((string)$plan['backup_dir']);
+ensure_dir_exists(dirname((string)$plan['config_path']));
+ensure_dir_exists(rtrim($effective_app_root, '/\\') . '/public/uploads');
+ensure_dir_exists(rtrim($effective_app_root, '/\\') . '/public/user-assets');
+
+fwrite(STDOUT, "Creating database and applying schema...\n");
+create_database_and_schema($plan, $effective_app_root);
+
+fwrite(STDOUT, "Creating/updating application DB user...\n");
+create_or_update_app_db_user($plan);
+
+fwrite(STDOUT, "Creating/updating catalog admin user...\n");
+create_or_update_catalog_admin($plan);
+
+fwrite(STDOUT, "Writing application config...\n");
+write_config_file($plan, $effective_app_root);
+
+fwrite(STDOUT, "Writing Apache vhost snippet...\n");
+$vhost_path = write_vhost_snippet($plan, $effective_app_root);
+
+install_sample_data_if_requested($plan);
+
+fwrite(STDOUT, "\nInstallation completed.\n");
+fwrite(STDOUT, "Application root: {$effective_app_root}\n");
+fwrite(STDOUT, "Config file: {$plan['config_path']}\n");
+fwrite(STDOUT, "Vhost snippet: {$vhost_path}\n");
+fwrite(STDOUT, "Next: copy/include the vhost snippet, reload Apache, then login with admin '{$plan['catalog_admin']['username']}'.\n");
+exit(0);

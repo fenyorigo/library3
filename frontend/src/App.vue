@@ -37,14 +37,14 @@
         <button :disabled="loading || !q" @click="clearSearch">Clear</button>
         <button @click="resetSort">Reset sort</button>
         <button v-if="isAdmin" class="primary" @click="openAdd">+ Add Book</button>
-        <button v-if="isAdmin" @click="openCsvImport">Import CSV</button>
+        <button v-if="isAdmin" @click="openCsvImport">Import books</button>
         <button v-if="isAdmin" @click="onRebuildThumbs">Rebuild thumbs</button>
         <button
           v-if="isAdmin"
           class="link-btn"
           type="button"
           @click="onExportSelectedBundle"
-        >Export selected (CSV + covers)</button>
+        >Export selected books (CSV + covers)</button>
         <button
           v-if="isAdmin"
           class="link-btn"
@@ -764,9 +764,12 @@ const onPurgeCatalog = async () => {
     const res = await purgeCatalog("DELETE");
     const data = res?.data || {};
     const removedFiles = Number(data.deleted_upload_files || 0);
+    const removedCoverFiles = Number(data.deleted_upload_cover_files || 0);
+    const removedThumbFiles = Number(data.deleted_upload_thumb_files || 0);
+    const removedOtherFiles = Number(data.deleted_upload_other_files || 0);
     const removedDirs = Number(data.deleted_upload_dirs || 0);
     alert(
-      `Catalog purge completed.\nRemoved upload files: ${removedFiles}\nRemoved upload dirs: ${removedDirs}`
+      `Catalog purge completed.\nRemoved cover files: ${removedCoverFiles}\nRemoved thumbnail files: ${removedThumbFiles}\nRemoved other upload files: ${removedOtherFiles}\nRemoved upload files total: ${removedFiles}\nRemoved upload dirs: ${removedDirs}`
     );
     page.value = 1;
     await reload();

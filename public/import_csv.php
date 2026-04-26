@@ -9,7 +9,8 @@ require_admin();
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
 ini_set('memory_limit', '512M');
-set_time_limit(600);
+// Long ZIP restore can exceed proxy/FPM defaults; keep script-side timeout unlimited.
+set_time_limit(0);
 ignore_user_abort(true);
 
 function import_size_to_bytes(string $value): int {
@@ -178,15 +179,15 @@ if ($method === 'GET') {
     ?>
     <!doctype html>
     <meta charset="utf-8">
-    <title>Import CSV / Bundle</title>
+    <title>Import books</title>
     <style>
         body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 2rem; }
         form { display: grid; gap: .75rem; max-width: 680px; }
         label { font-weight: 600; }
     </style>
-    <h1>Import CSV / Bundle</h1>
+    <h1>Import books</h1>
     <p>Supported formats:<br>
-        <code>books_export.csv</code>, or ZIP bundle from <code>Export selected (CSV + covers)</code>.</p>
+        <code>books_export.csv</code>, or ZIP bundle from <code>Export selected books (CSV + covers)</code>.</p>
     <form method="post" enctype="multipart/form-data">
         <label>Import file
             <input type="file" name="file" accept=".csv,.zip,text/csv,text/plain,application/zip" required>
