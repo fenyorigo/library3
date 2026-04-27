@@ -1,0 +1,46 @@
+# BookCatalog installer parameter example
+# Usage:
+#   php install.php --install --params-file=/absolute/path/to/install.params
+#
+# Format:
+# - one argument per line
+# - same syntax as CLI flags: --key=value
+# - empty lines and lines starting with '#' are ignored
+# - do NOT put passwords here; installer asks them interactively
+
+# Mode / platform
+--platform=fedora
+--source-mode=archive
+--application-archive=/root/bookcatalog.tar.gz
+
+# Core paths
+--target-dir=/var/www/katalogus
+--backup-dir=/var/backups/library
+--config-path=/etc/bookcatalog/katalogus.conf
+--vhost-output-path=/etc/httpd/conf.d/8446-katalogus.conf
+
+# Database connection (non-secret parts)
+--mysql-host=127.0.0.1
+--mysql-port=3306
+--mysql-admin-user=root
+--db-name=katalogus
+--app-db-user=katalogus_app
+--generate-app-db-password=true
+
+# Catalog admin (username only; password is prompted)
+--catalog-admin-user=admin
+
+# Apache / TLS
+--server-name=library.bajancsalad.net
+--apache-port=8446
+--ssl-cert-path=/etc/pki/tls/certs/localhost.crt
+--ssl-key-path=/etc/pki/tls/private/localhost.key
+
+# Sample data
+--install-sample-data=false
+#--sample-data-archive=/root/bookcatalog-sample-data.tar.gz
+
+# Fedora-specific extras
+--fedora-listen-conf-path=/etc/httpd/conf.d/00-listen.conf
+--fedora-firewall-cidr=192.168.0.0/24
+--fedora-firewall-interface=enp0s25

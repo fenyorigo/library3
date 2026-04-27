@@ -238,6 +238,49 @@ function validate_db_identifier(string $raw, string $field): ?string {
     return null;
 }
 
+function parse_bool_option(string $raw, string $name): bool {
+    $v = strtolower(trim($raw));
+    if (in_array($v, ['1', 'true', 'yes', 'y', 'on'], true)) return true;
+    if (in_array($v, ['0', 'false', 'no', 'n', 'off'], true)) return false;
+    fail("Invalid {$name} value '{$raw}'. Allowed: true|false|yes|no|1|0");
+}
+
+function parse_params_file_args(string $path): array {
+    $resolved = $path;
+    if (!is_absolute_path($resolved)) {
+        $cwd = getcwd();
+        if (!is_string($cwd) || $cwd === '') {
+            fail("Cannot resolve relative --params-file path: {$path}");
+        }
+        $resolved = rtrim($cwd, "/\\") . '/' . $path;
+    }
+    if (!is_file($resolved) || !is_readable($resolved)) {
+        fail("Params file is missing or not readable: {$resolved}");
+    }
+
+    $lines = @file($resolved, FILE_IGNORE_NEW_LINES);
+    if ($lines === false) {
+        fail("Failed to read params file: {$resolved}");
+    }
+
+    $args = [];
+    foreach ($lines as $line_no => $line) {
+        $raw = trim((string)$line);
+        if ($raw === '' || str_starts_with($raw, '#')) {
+            continue;
+        }
+        if (!str_starts_with($raw, '--')) {
+            fail("Invalid params file line " . ($line_no + 1) . " in {$resolved}: expected '--key=value'");
+        }
+        if (str_starts_with($raw, '--params-file=')) {
+            fail("Nested --params-file is not supported (line " . ($line_no + 1) . " in {$resolved})");
+        }
+        $args[] = $raw;
+    }
+
+    return $args;
+}
+
 function parse_installer_options(array $args, string $root): array {
     $opts = [
         'precheck_only' => false,
@@ -248,9 +291,41 @@ function parse_installer_options(array $args, string $root): array {
         'apache_port' => 8443,
         'target_dir' => $root,
         'backup_dir' => null,
+        'source_mode' => null,
+        'application_archive' => null,
+        'mysql_admin_user' => null,
+        'db_name' => null,
+        'app_db_user' => null,
+        'generate_app_db_password' => null,
+        'catalog_admin_user' => null,
+        'config_path' => null,
+        'server_name' => null,
+        'ssl_cert_path' => null,
+        'ssl_key_path' => null,
+        'vhost_output_path' => null,
+        'install_sample_data' => null,
+        'sample_data_archive' => null,
+        'fedora_listen_conf_path' => null,
+        'fedora_firewall_cidr' => null,
+        'fedora_firewall_interface' => null,
     ];
 
+    $file_args = [];
+    $cli_args = [];
     foreach ($args as $arg) {
+        if (str_starts_with($arg, '--params-file=')) {
+            $value = trim(substr($arg, strlen('--params-file=')));
+            if ($value === '') {
+                fail('Invalid --params-file value: empty');
+            }
+            $file_args = array_merge($file_args, parse_params_file_args($value));
+            continue;
+        }
+        $cli_args[] = $arg;
+    }
+    $all_args = array_merge($file_args, $cli_args);
+
+    foreach ($all_args as $arg) {
         if ($arg === '--precheck') {
             $opts['precheck_only'] = true;
             continue;
@@ -309,7 +384,115 @@ function parse_installer_options(array $args, string $root): array {
             $opts['backup_dir'] = $value;
             continue;
         }
-        fail('Unknown argument(s). Supported: --precheck, --install, --platform=mac|fedora, --mysql-host=<host>, --mysql-port=<port>, --apache-port=<port>, --target-dir=<path>, --backup-dir=<path>');
+        if (str_starts_with($arg, '--source-mode=')) {
+            $value = strtolower(trim(substr($arg, strlen('--source-mode='))));
+            if (!in_array($value, ['extracted', 'archive'], true)) {
+                fail("Invalid --source-mode value '{$value}'. Allowed: extracted, archive");
+            }
+            $opts['source_mode'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--application-archive=')) {
+            $value = trim(substr($arg, strlen('--application-archive=')));
+            if (!is_absolute_path($value)) {
+                fail('Invalid --application-archive value: must be absolute path');
+            }
+            $opts['application_archive'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--mysql-admin-user=')) {
+            $value = trim(substr($arg, strlen('--mysql-admin-user=')));
+            if ($value === '') fail('Invalid --mysql-admin-user value: empty');
+            $opts['mysql_admin_user'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--db-name=')) {
+            $value = trim(substr($arg, strlen('--db-name=')));
+            $err = validate_db_identifier($value, 'DB name');
+            if ($err !== null) fail("Invalid --db-name value '{$value}': {$err}");
+            $opts['db_name'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--app-db-user=')) {
+            $value = trim(substr($arg, strlen('--app-db-user=')));
+            $err = validate_db_identifier($value, 'DB user');
+            if ($err !== null) fail("Invalid --app-db-user value '{$value}': {$err}");
+            $opts['app_db_user'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--generate-app-db-password=')) {
+            $value = trim(substr($arg, strlen('--generate-app-db-password=')));
+            $opts['generate_app_db_password'] = parse_bool_option($value, '--generate-app-db-password');
+            continue;
+        }
+        if (str_starts_with($arg, '--catalog-admin-user=')) {
+            $value = trim(substr($arg, strlen('--catalog-admin-user=')));
+            if ($value === '') fail('Invalid --catalog-admin-user value: empty');
+            $opts['catalog_admin_user'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--config-path=')) {
+            $value = trim(substr($arg, strlen('--config-path=')));
+            if (!is_absolute_path($value)) fail('Invalid --config-path value: must be absolute path');
+            $opts['config_path'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--server-name=')) {
+            $value = trim(substr($arg, strlen('--server-name=')));
+            if ($value === '') fail('Invalid --server-name value: empty');
+            $opts['server_name'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--ssl-cert-path=')) {
+            $value = trim(substr($arg, strlen('--ssl-cert-path=')));
+            if (!is_absolute_path($value)) fail('Invalid --ssl-cert-path value: must be absolute path');
+            $opts['ssl_cert_path'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--ssl-key-path=')) {
+            $value = trim(substr($arg, strlen('--ssl-key-path=')));
+            if (!is_absolute_path($value)) fail('Invalid --ssl-key-path value: must be absolute path');
+            $opts['ssl_key_path'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--vhost-output-path=')) {
+            $value = trim(substr($arg, strlen('--vhost-output-path=')));
+            if (!is_absolute_path($value)) fail('Invalid --vhost-output-path value: must be absolute path');
+            $opts['vhost_output_path'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--install-sample-data=')) {
+            $value = trim(substr($arg, strlen('--install-sample-data=')));
+            $opts['install_sample_data'] = parse_bool_option($value, '--install-sample-data');
+            continue;
+        }
+        if (str_starts_with($arg, '--sample-data-archive=')) {
+            $value = trim(substr($arg, strlen('--sample-data-archive=')));
+            if (!is_absolute_path($value)) fail('Invalid --sample-data-archive value: must be absolute path');
+            $opts['sample_data_archive'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--fedora-listen-conf-path=')) {
+            $value = trim(substr($arg, strlen('--fedora-listen-conf-path=')));
+            if (!is_absolute_path($value)) fail('Invalid --fedora-listen-conf-path value: must be absolute path');
+            $opts['fedora_listen_conf_path'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--fedora-firewall-cidr=')) {
+            $value = trim(substr($arg, strlen('--fedora-firewall-cidr=')));
+            if (!preg_match('/^\d+\.\d+\.\d+\.\d+\/\d+$/', $value)) {
+                fail("Invalid --fedora-firewall-cidr value '{$value}'. Expected CIDR like 192.168.0.0/24");
+            }
+            $opts['fedora_firewall_cidr'] = $value;
+            continue;
+        }
+        if (str_starts_with($arg, '--fedora-firewall-interface=')) {
+            $value = trim(substr($arg, strlen('--fedora-firewall-interface=')));
+            if ($value === '') fail('Invalid --fedora-firewall-interface value: empty');
+            $opts['fedora_firewall_interface'] = $value;
+            continue;
+        }
+        fail('Unknown argument. Supported: --params-file=<path>, --precheck, --install, --platform=mac|fedora, --mysql-host=<host>, --mysql-port=<port>, --apache-port=<port>, --target-dir=<path>, --backup-dir=<path>, --source-mode=extracted|archive, --application-archive=<path>, --mysql-admin-user=<user>, --db-name=<name>, --app-db-user=<user>, --generate-app-db-password=true|false, --catalog-admin-user=<user>, --config-path=<path>, --server-name=<name>, --ssl-cert-path=<path>, --ssl-key-path=<path>, --vhost-output-path=<path>, --install-sample-data=true|false, --sample-data-archive=<path>, --fedora-listen-conf-path=<path>, --fedora-firewall-cidr=<cidr>, --fedora-firewall-interface=<iface>');
     }
 
     if ($opts['precheck_only'] && $opts['install_mode']) {
@@ -1041,6 +1224,9 @@ function collect_install_plan(array $opts, array $platform_profile): array {
     }, (string)$opts['target_dir']);
 
     $default_source_mode = is_file(rtrim($target_dir, '/\\') . '/install.php') ? 'extracted' : 'archive';
+    if (is_string($opts['source_mode'] ?? null) && in_array($opts['source_mode'], ['extracted', 'archive'], true)) {
+        $default_source_mode = (string)$opts['source_mode'];
+    }
     $source_mode = prompt_choice('Application source mode', ['extracted', 'archive'], $default_source_mode);
 
     $tar_path = null;
@@ -1055,26 +1241,44 @@ function collect_install_plan(array $opts, array $platform_profile): array {
             $default_tar = $candidate_dl;
         }
 
+        $tar_default = is_string($opts['application_archive'] ?? null) && trim((string)$opts['application_archive']) !== ''
+            ? (string)$opts['application_archive']
+            : ($default_tar !== '' ? $default_tar : null);
         $tar_path = prompt_until_valid('Application tar.gz path', static function (string $v): ?string {
             if ($v === '') return 'path is required';
             if (!is_absolute_path($v)) return 'path must be absolute';
             if (!is_file($v) || !is_readable($v)) return 'file is missing or not readable';
             if (!preg_match('/\.(tar\.gz|tgz)$/i', $v)) return 'file should end with .tar.gz or .tgz';
             return null;
-        }, $default_tar !== '' ? $default_tar : null);
+        }, $tar_default);
     }
 
     $mysql_host = prompt_until_valid('DB host', static fn(string $v): ?string => trim($v) === '' ? 'host is required' : null, (string)$opts['mysql_host']);
     $mysql_port_s = prompt_until_valid('DB port', static fn(string $v): ?string => validate_port($v), (string)$opts['mysql_port']);
     $mysql_port = (int)$mysql_port_s;
 
-    $mysql_admin_user = prompt_until_valid('MySQL admin/root username', static fn(string $v): ?string => trim($v) === '' ? 'username is required' : null);
+    $mysql_admin_user = prompt_until_valid(
+        'MySQL admin/root username',
+        static fn(string $v): ?string => trim($v) === '' ? 'username is required' : null,
+        is_string($opts['mysql_admin_user'] ?? null) ? (string)$opts['mysql_admin_user'] : null
+    );
     $mysql_admin_password = prompt_until_valid('MySQL admin/root password', static fn(string $v): ?string => $v === '' ? 'password is required' : null, null, true);
 
-    $db_name = prompt_until_valid('Catalog DB name', static fn(string $v): ?string => validate_db_identifier($v, 'DB name'), 'books');
-    $app_db_user = prompt_until_valid('App DB user', static fn(string $v): ?string => validate_db_identifier($v, 'DB user'), 'bookcatalog_app');
+    $db_name = prompt_until_valid(
+        'Catalog DB name',
+        static fn(string $v): ?string => validate_db_identifier($v, 'DB name'),
+        is_string($opts['db_name'] ?? null) ? (string)$opts['db_name'] : 'books'
+    );
+    $app_db_user = prompt_until_valid(
+        'App DB user',
+        static fn(string $v): ?string => validate_db_identifier($v, 'DB user'),
+        is_string($opts['app_db_user'] ?? null) ? (string)$opts['app_db_user'] : 'bookcatalog_app'
+    );
 
-    $generate_app_db_password = prompt_yes_no('Generate random strong app DB password?', true);
+    $generate_app_db_password_default = is_bool($opts['generate_app_db_password'] ?? null)
+        ? (bool)$opts['generate_app_db_password']
+        : true;
+    $generate_app_db_password = prompt_yes_no('Generate random strong app DB password?', $generate_app_db_password_default);
     if ($generate_app_db_password) {
         $app_db_password = generate_strong_password(24);
         fwrite(STDOUT, "App DB password generated (hidden).\n");
@@ -1091,7 +1295,11 @@ function collect_install_plan(array $opts, array $platform_profile): array {
         }
     }
 
-    $catalog_admin_user = prompt_until_valid('Catalog admin username', static fn(string $v): ?string => trim($v) === '' ? 'username is required' : null, 'admin');
+    $catalog_admin_user = prompt_until_valid(
+        'Catalog admin username',
+        static fn(string $v): ?string => trim($v) === '' ? 'username is required' : null,
+        is_string($opts['catalog_admin_user'] ?? null) ? (string)$opts['catalog_admin_user'] : 'admin'
+    );
     fwrite(STDOUT, "Catalog admin password policy:\n");
     foreach (password_policy_messages($catalog_admin_user) as $msg) {
         fwrite(STDOUT, "- {$msg}\n");
@@ -1125,41 +1333,59 @@ function collect_install_plan(array $opts, array $platform_profile): array {
     } else {
         $config_default = rtrim((string)$platform_profile['config_dir'], '/\\') . '/library-config.php';
     }
+    $config_default = is_string($opts['config_path'] ?? null) && trim((string)$opts['config_path']) !== ''
+        ? (string)$opts['config_path']
+        : $config_default;
     $config_path = prompt_until_valid('Config path', static function (string $v): ?string {
         if (!is_absolute_path($v)) return 'must be an absolute path';
         return null;
     }, $config_default);
 
-    $server_name = prompt_until_valid('ServerName', static fn(string $v): ?string => trim($v) === '' ? 'ServerName is required' : null, 'localhost');
+    $server_name = prompt_until_valid(
+        'ServerName',
+        static fn(string $v): ?string => trim($v) === '' ? 'ServerName is required' : null,
+        is_string($opts['server_name'] ?? null) ? (string)$opts['server_name'] : 'localhost'
+    );
     $https_port_s = prompt_until_valid('Apache HTTPS port', static fn(string $v): ?string => validate_port($v), (string)$opts['apache_port']);
     $https_port = (int)$https_port_s;
+
+    $default_ssl_cert = (($platform_profile['name'] ?? '') === 'fedora')
+        ? '/etc/pki/tls/certs/localhost.crt'
+        : '/opt/homebrew/etc/httpd/certs/bookcatalogv2.crt';
+    $default_ssl_key = (($platform_profile['name'] ?? '') === 'fedora')
+        ? '/etc/pki/tls/private/localhost.key'
+        : '/opt/homebrew/etc/httpd/certs/bookcatalogv2.key';
 
     $ssl_cert_path = prompt_until_valid('SSL certificate path', static function (string $v): ?string {
         if (!is_absolute_path($v)) return 'must be absolute path';
         if (!is_file($v) || !is_readable($v)) return 'file is missing or not readable';
         return null;
-    }, '/opt/homebrew/etc/httpd/certs/bookcatalogv2.crt');
+    }, is_string($opts['ssl_cert_path'] ?? null) ? (string)$opts['ssl_cert_path'] : $default_ssl_cert);
 
     $ssl_key_path = prompt_until_valid('SSL key path', static function (string $v): ?string {
         if (!is_absolute_path($v)) return 'must be absolute path';
         if (!is_file($v) || !is_readable($v)) return 'file is missing or not readable';
         return null;
-    }, '/opt/homebrew/etc/httpd/certs/bookcatalogv2.key');
+    }, is_string($opts['ssl_key_path'] ?? null) ? (string)$opts['ssl_key_path'] : $default_ssl_key);
 
     $vhost_output_default = rtrim($target_dir, '/\\') . '/install-output/httpd-bookcatalog-' . $https_port . '.conf';
     $fedora_cfg = null;
     if (($platform_profile['name'] ?? '') === 'fedora') {
-        $vhost_output_default = '/etc/httpd/conf.d/' . $target_name . '-vhost.conf';
+        // Fedora naming convention: <port>-<app>.conf (app = target dir basename)
+        $vhost_output_default = '/etc/httpd/conf.d/' . $https_port . '-' . $target_name . '.conf';
         $listen_conf_path = prompt_until_valid('Fedora listen.conf path', static function (string $v): ?string {
             if (!is_absolute_path($v)) return 'must be absolute path';
             return null;
-        }, '/etc/httpd/conf.d/listen.conf');
+        }, is_string($opts['fedora_listen_conf_path'] ?? null) ? (string)$opts['fedora_listen_conf_path'] : '/etc/httpd/conf.d/listen.conf');
         $firewall_cidr = prompt_until_valid('Fedora allowed LAN CIDR', static function (string $v): ?string {
             if (!preg_match('/^\\d+\\.\\d+\\.\\d+\\.\\d+\\/\\d+$/', $v)) return 'must look like 192.168.0.0/24';
             return null;
-        }, '192.168.0.0/24');
+        }, is_string($opts['fedora_firewall_cidr'] ?? null) ? (string)$opts['fedora_firewall_cidr'] : '192.168.0.0/24');
         $detected_iface = detect_interface_for_cidr($firewall_cidr);
-        $firewall_iface = prompt_until_valid('Fedora network interface', static fn(string $v): ?string => trim($v) === '' ? 'interface is required' : null, $detected_iface !== '' ? $detected_iface : 'enp0s31f6');
+        $firewall_iface_default = is_string($opts['fedora_firewall_interface'] ?? null) && trim((string)$opts['fedora_firewall_interface']) !== ''
+            ? (string)$opts['fedora_firewall_interface']
+            : ($detected_iface !== '' ? $detected_iface : 'enp0s31f6');
+        $firewall_iface = prompt_until_valid('Fedora network interface', static fn(string $v): ?string => trim($v) === '' ? 'interface is required' : null, $firewall_iface_default);
         $fedora_cfg = [
             'listen_conf_path' => $listen_conf_path,
             'firewall_cidr' => $firewall_cidr,
@@ -1167,19 +1393,25 @@ function collect_install_plan(array $opts, array $platform_profile): array {
         ];
     }
 
+    $vhost_output_default = is_string($opts['vhost_output_path'] ?? null) && trim((string)$opts['vhost_output_path']) !== ''
+        ? (string)$opts['vhost_output_path']
+        : $vhost_output_default;
     $vhost_output_path = prompt_until_valid('Vhost output path', static function (string $v): ?string {
         if (!is_absolute_path($v)) return 'must be absolute path';
         return null;
     }, $vhost_output_default);
 
-    $install_sample = prompt_yes_no('Install sample data archive?', false);
+    $install_sample_default = is_bool($opts['install_sample_data'] ?? null)
+        ? (bool)$opts['install_sample_data']
+        : false;
+    $install_sample = prompt_yes_no('Install sample data archive?', $install_sample_default);
     $sample_path = null;
     if ($install_sample) {
         $sample_path = prompt_until_valid('Sample data archive path', static function (string $v): ?string {
             if (!is_absolute_path($v)) return 'must be absolute path';
             if (!is_file($v) || !is_readable($v)) return 'file is missing or not readable';
             return null;
-        });
+        }, is_string($opts['sample_data_archive'] ?? null) ? (string)$opts['sample_data_archive'] : null);
     }
 
     return [

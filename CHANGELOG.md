@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.6.3] - 2026-04-27
+### Added
+- Installer supports `--params-file=<path>` to preload non-secret install options from a line-based argument file
+- Added `install.params.example` template for reusable unattended installer defaults
+
+### Changed
+- Fedora installer default vhost filename format is now `/etc/httpd/conf.d/<port>-<app>.conf` (`<app>` from target directory basename)
+
 ## [2.6.2] - 2026-04-26
 ### Added
 - Installer now applies Fedora-specific post-install hardening: app/backup ownership and permissions, plus post-install verification checks
