@@ -8,6 +8,7 @@ if (php_sapi_name() !== 'cli') {
 }
 
 $root = __DIR__;
+$PROMPT_AUTO_DEFAULTS = false;
 
 function fail(string $message): void {
     fwrite(STDERR, $message . "\n");
@@ -25,6 +26,10 @@ function is_tty_input(): bool {
 }
 
 function prompt(string $label, ?string $default = null): string {
+    if (($GLOBALS['PROMPT_AUTO_DEFAULTS'] ?? false) && $default !== null) {
+        fwrite(STDOUT, $label . " [{$default}]: {$default}\n");
+        return $default;
+    }
     $suffix = $default !== null ? " [{$default}]" : '';
     fwrite(STDOUT, $label . $suffix . ': ');
     $line = fgets(STDIN);
@@ -111,15 +116,20 @@ function check_writable_or_creatable_dir(string $dir): array {
         return ['ok' => true, 'message' => "{$dir} is writable"];
     }
 
-    $parent = dirname($dir);
-    if (!is_dir($parent)) {
-        return ['ok' => false, 'message' => "Parent directory does not exist: {$parent}"];
+    // Allow missing intermediate directories: find nearest existing ancestor.
+    $anchor = $dir;
+    while (!is_dir($anchor)) {
+        $next = dirname($anchor);
+        if ($next === $anchor || $next === '.' || $next === '') {
+            return ['ok' => false, 'message' => "No existing ancestor directory found for: {$dir}"];
+        }
+        $anchor = $next;
     }
-    if (!is_writable($parent)) {
-        return ['ok' => false, 'message' => "Parent directory is not writable: {$parent}"];
+    if (!is_writable($anchor)) {
+        return ['ok' => false, 'message' => "Nearest existing ancestor is not writable: {$anchor}"];
     }
 
-    return ['ok' => true, 'message' => "{$dir} can be created (parent writable: {$parent})"];
+    return ['ok' => true, 'message' => "{$dir} can be created (nearest writable ancestor: {$anchor})"];
 }
 
 function ini_size_to_bytes(string $value): int {
@@ -308,10 +318,12 @@ function parse_installer_options(array $args, string $root): array {
         'fedora_listen_conf_path' => null,
         'fedora_firewall_cidr' => null,
         'fedora_firewall_interface' => null,
+        'auto_defaults' => false,
     ];
 
     $file_args = [];
     $cli_args = [];
+    $has_params_file = false;
     foreach ($args as $arg) {
         if (str_starts_with($arg, '--params-file=')) {
             $value = trim(substr($arg, strlen('--params-file=')));
@@ -319,6 +331,7 @@ function parse_installer_options(array $args, string $root): array {
                 fail('Invalid --params-file value: empty');
             }
             $file_args = array_merge($file_args, parse_params_file_args($value));
+            $has_params_file = true;
             continue;
         }
         $cli_args[] = $arg;
@@ -497,6 +510,9 @@ function parse_installer_options(array $args, string $root): array {
 
     if ($opts['precheck_only'] && $opts['install_mode']) {
         fail('Use either --precheck or --install, not both.');
+    }
+    if ($has_params_file) {
+        $opts['auto_defaults'] = true;
     }
 
     return $opts;
@@ -1454,6 +1470,7 @@ function collect_install_plan(array $opts, array $platform_profile): array {
 $argv = $_SERVER['argv'] ?? [];
 $args = array_slice($argv, 1);
 $opts = parse_installer_options($args, $root);
+$PROMPT_AUTO_DEFAULTS = (bool)($opts['auto_defaults'] ?? false);
 $platform = (string)$opts['platform'];
 $platform_profile = installer_platform_profile($platform);
 
@@ -1488,7 +1505,10 @@ $redacted = redact_install_plan($plan);
 fwrite(STDOUT, "\n=== Installation Summary (passwords hidden) ===\n");
 fwrite(STDOUT, json_encode($redacted, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
 
+$auto_defaults_prev = (bool)($GLOBALS['PROMPT_AUTO_DEFAULTS'] ?? false);
+$GLOBALS['PROMPT_AUTO_DEFAULTS'] = false;
 $proceed = prompt_yes_no('Proceed with installation?', false);
+$GLOBALS['PROMPT_AUTO_DEFAULTS'] = $auto_defaults_prev;
 if (!$proceed) {
     fwrite(STDOUT, "Installation cancelled. No changes were made.\n");
     exit(0);

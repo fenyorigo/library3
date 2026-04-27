@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.6.4] - 2026-04-27
+### Changed
+- Installer `--params-file` flow now auto-accepts non-secret prompt defaults from provided values while still prompting for passwords and final proceed confirmation
+- Filesystem precheck now accepts non-existent nested target paths when a writable ancestor exists (installer can create missing target directories)
+
 ## [2.6.3] - 2026-04-27
 ### Added
 - Installer supports `--params-file=<path>` to preload non-secret install options from a line-based argument file
