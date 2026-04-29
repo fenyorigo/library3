@@ -1,9 +1,28 @@
-This repo is the installable/self-hosted distribution.
-It can import/export data compatible with v2.2.0 dumps/csv.
-Config is external via BOOKCATALOG_CONFIG.”
-	•	v2.3.0 schema includes SystemInfo
-	•	consumes v2.2.0 dumps/csv
-	•	v2.3.2 – Added admin-only duplicate candidates report to assist with catalog cleanup and collection curation
-	•	v2.3.3 – Duplicate candidate logic updated (subtitle-aware, author sort-name based). Existing duplicate reviews must be reset.
-	•	maintenance: optional SQL scripts available to remove zero-width characters and normalize decomposed accents
-	•	v2.6.4 – Installer params-file now auto-applies non-secret defaults; precheck accepts creatable nested target directories
+BookCatalog v3 is based on **v2.6.4** (schema **2.3.5**) and extends the system to support **ebooks alongside print books** in a unified catalog.
+
+## Overview
+
+BookCatalog is a **catalog system**, not a library manager.
+
+- It does **not store or manage ebook files**
+- It stores **metadata only**:
+  - authors
+  - title / subtitle
+  - format (print / ebook)
+  - file path (for ebooks)
+  - other bibliographic data
+
+## What’s new in v3
+
+The main goal of v3 is to handle **print and ebook items in a single, unified model**.
+
+Key changes:
+
+- Introduction of **bibliographic records**
+  - A single record can contain multiple copies (print and/or ebook)
+- Introduction of **book copies**
+  - Each format (print, epub, pdf, etc.) is stored as a separate copy
+- Support for **multiple ebook formats per title**
+- Addition of **language field**
+- Support for **file paths** for ebook copies
+- Logical delete (**soft delete**) support

@@ -684,7 +684,10 @@ function infer_import_language_from_metadata(?string $title, ?string $subtitle, 
 
     foreach ($parts as $part) {
         if (strpos($part, 'è') !== false || strpos($part, 'È') !== false) return 'fr';
-        if (strpos($part, 'ä') !== false || strpos($part, 'Ä') !== false) return 'de';
+        if (
+            strpos($part, 'ä') !== false || strpos($part, 'Ä') !== false ||
+            strpos($part, 'ß') !== false
+        ) return 'de';
     }
 
     if (
