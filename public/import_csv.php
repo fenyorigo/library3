@@ -401,6 +401,7 @@ try {
         $id_in = null;
         $cover_image_rel = null;
         $cover_thumb_rel = null;
+        $language_field_present = false;
         if ($mode === 'legacy') {
             $subtitle = N($data['subtitle'] ?? null);
             $year = $normalize_year($data['year_published'] ?? null);
@@ -431,6 +432,7 @@ try {
             $source_old_id = $id_in;
             $subtitle = N($data['subtitle'] ?? null);
             $series = N($data['series'] ?? null);
+            $language_field_present = array_key_exists('language', $data);
             $language = normalize_book_language($data['language'] ?? 'unknown');
             $record_status = normalize_book_record_status($data['record_status'] ?? 'active');
             $year = $normalize_year($data['year'] ?? ($data['year_published'] ?? null));
@@ -502,7 +504,13 @@ try {
         }
 
         if ($language === 'unknown') {
-            $language = infer_import_language_from_metadata($title, $subtitle, $authors_csv);
+            $language = infer_import_language_from_metadata(
+                $title,
+                $subtitle,
+                $authors_csv,
+                null,
+                !$language_field_present
+            );
         }
 
         if ($dry_run) {

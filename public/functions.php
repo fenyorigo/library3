@@ -667,7 +667,13 @@ function split_authors_csv(?string $authors_csv): array {
     return $names;
 }
 
-function infer_import_language_from_metadata(?string $title, ?string $subtitle, ?string $authors_csv, ?int $force_authors_is_hungarian = null): string {
+function infer_import_language_from_metadata(
+    ?string $title,
+    ?string $subtitle,
+    ?string $authors_csv,
+    ?int $force_authors_is_hungarian = null,
+    bool $allow_author_hungarian_fallback = true
+): string {
     $parts = array_values(array_filter([
         trim((string)$title),
         trim((string)$subtitle),
@@ -694,10 +700,26 @@ function infer_import_language_from_metadata(?string $title, ?string $subtitle, 
     }
 
     if (
+        strpos($haystack, ' am ') !== false ||
+        strpos($haystack, ' der ') !== false ||
+        strpos($haystack, ' die ') !== false ||
+        strpos($haystack, ' das ') !== false ||
+        strpos($haystack, ' ein ') !== false ||
+        strpos($haystack, ' über ') !== false ||
+        strpos($haystack, ' um ') !== false ||
+        strpos($haystack, ' von ') !== false ||
+        strpos($haystack, ' und ') !== false ||
+        strpos($haystack, ' im ') !== false
+    ) return 'de';
+    if (
+        str_starts_with($needle, 'le ') ||
+        str_starts_with($needle, 'une ') ||
         str_starts_with($needle, "l'") ||
         str_starts_with($needle, "d'") ||
+        strpos($haystack, ' le ') !== false ||
         strpos($haystack, ' la ') !== false ||
         strpos($haystack, ' les ') !== false ||
+        strpos($haystack, ' une ') !== false ||
         strpos($haystack, ' de ') !== false ||
         strpos($haystack, ' du ') !== false ||
         strpos($haystack, ' et ') !== false ||
@@ -706,18 +728,19 @@ function infer_import_language_from_metadata(?string $title, ?string $subtitle, 
         strpos($haystack, " d'") !== false
     ) return 'fr';
     if (
-        strpos($haystack, ' der ') !== false ||
-        strpos($haystack, ' das ') !== false ||
-        strpos($haystack, ' um ') !== false ||
-        strpos($haystack, ' von ') !== false ||
-        strpos($haystack, ' und ') !== false ||
-        strpos($haystack, ' im ') !== false
-    ) return 'de';
-    if (
         strpos($haystack, ' the ') !== false ||
         strpos($haystack, ' of ') !== false ||
         strpos($haystack, ' for ') !== false ||
         strpos($haystack, ' and ') !== false ||
+        str_starts_with($needle, 'war ') ||
+        strpos($haystack, ' war ') !== false ||
+        str_starts_with($needle, 'what ') ||
+        strpos($haystack, ' what ') !== false ||
+        str_starts_with($needle, 'who ') ||
+        strpos($haystack, ' who ') !== false ||
+        str_starts_with($needle, 'was ') ||
+        strpos($haystack, ' was ') !== false ||
+        strpos($haystack, ' at ') !== false ||
         strpos($haystack, ' by ') !== false ||
         strpos($haystack, ' to ') !== false ||
         str_starts_with($needle, 'why ') ||
@@ -728,28 +751,37 @@ function infer_import_language_from_metadata(?string $title, ?string $subtitle, 
         strpos($haystack, ' we ') !== false ||
         strpos($haystack, ' my ') !== false
     ) return 'en';
-    if (strpos($haystack, ' az ') !== false || strpos($haystack, ' és ') !== false) return 'hu';
+    if (
+        strpos($haystack, ' az ') !== false ||
+        strpos($haystack, ' és ') !== false ||
+        str_starts_with($needle, 'ö') ||
+        str_starts_with($needle, 'szent ') ||
+        strpos($haystack, ' ami ') !== false ||
+        strpos($haystack, ' aki ') !== false
+    ) return 'hu';
 
     foreach ($parts as $part) {
         if (preg_match('/[áÁéÉíÍóÓőŐúÚűŰ]/u', $part)) return 'hu';
     }
 
-    $names = split_authors_csv($authors_csv);
-    if ($names) {
-        $all_hungarian = true;
-        foreach ($names as $name) {
-            if ($force_authors_is_hungarian !== null) {
-                $is_hungarian = (bool)$force_authors_is_hungarian;
-            } else {
-                $is_hungarian = strpos($name, ',') === false;
+    if ($allow_author_hungarian_fallback) {
+        $names = split_authors_csv($authors_csv);
+        if ($names) {
+            $all_hungarian = true;
+            foreach ($names as $name) {
+                if ($force_authors_is_hungarian !== null) {
+                    $is_hungarian = (bool)$force_authors_is_hungarian;
+                } else {
+                    $is_hungarian = strpos($name, ',') === false;
+                }
+                if (!$is_hungarian) {
+                    $all_hungarian = false;
+                    break;
+                }
             }
-            if (!$is_hungarian) {
-                $all_hungarian = false;
-                break;
+            if ($all_hungarian) {
+                return 'hu';
             }
-        }
-        if ($all_hungarian) {
-            return 'hu';
         }
     }
 

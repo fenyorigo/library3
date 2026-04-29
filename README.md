@@ -83,7 +83,7 @@ What the converter does:
 - groups multiple ebook formats of the same work into one record
 - skips duplicate copies
 - writes a v3-compatible import CSV
-- leaves language as `unknown` for later import-time inference
+- leaves language as `unknown`; imports still try title/subtitle-based detection, but only use the author-name Hungarian fallback when the source format omits the language field entirely
 
 Notes:
 
