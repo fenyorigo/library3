@@ -51,6 +51,17 @@
             <option value="odt">odt</option>
           </select>
         </label>
+        <label class="inline-filter">
+          <span>Language</span>
+          <select v-model="languageFilter" :disabled="loading" @change="onLanguageFilterChange">
+            <option value="">All</option>
+            <option value="unknown">unknown</option>
+            <option value="hu">hu</option>
+            <option value="en">en</option>
+            <option value="de">de</option>
+            <option value="fr">fr</option>
+          </select>
+        </label>
         <label v-if="isAdmin" class="inline-filter">
           <span>Records</span>
           <select v-model="recordStatusFilter" :disabled="loading" @change="onRecordStatusFilterChange">
@@ -256,6 +267,7 @@ const sort = ref("title");
 const dir = ref("asc");
 const q = ref("");
 const formatFilter = ref("");
+const languageFilter = ref("");
 const recordStatusFilter = ref("active");
 const loading = ref(false);
 const ignorePopStateOnce = ref(false);
@@ -546,6 +558,7 @@ const reload = async () => {
     const resp = await fetchBooks({
       q: q.value || undefined,
       format: formatFilter.value || undefined,
+      language: languageFilter.value || undefined,
       record_status: isAdmin.value ? recordStatusFilter.value : "active",
       page: page.value,
       per: perPage.value,
@@ -565,6 +578,7 @@ const reload = async () => {
       const p = new URLSearchParams();
       if (q.value) p.set("q", q.value);
       if (formatFilter.value) p.set("format", formatFilter.value);
+      if (languageFilter.value) p.set("language", languageFilter.value);
       if (isAdmin.value && recordStatusFilter.value !== "active") p.set("record_status", recordStatusFilter.value);
       if (page.value !== 1) p.set("page", String(page.value));
       if (perPage.value !== 25) p.set("per_page", String(perPage.value));
@@ -596,6 +610,7 @@ const applyUrlParams = () => {
     initialQueryParam.value = null;
   }
   formatFilter.value = p.get("format") || "";
+  languageFilter.value = p.get("language") || "";
   recordStatusFilter.value = p.get("record_status") || "active";
   if (p.has("page")) page.value = Math.max(1, parseInt(p.get("page") || "1", 10) || 1);
   if (p.has("per_page")) {
@@ -611,6 +626,7 @@ const onPopState = () => {
   ignorePopStateOnce.value = true;
   q.value = sp.get("q") || "";
   formatFilter.value = sp.get("format") || "";
+  languageFilter.value = sp.get("language") || "";
   recordStatusFilter.value = sp.get("record_status") || "active";
   page.value = Math.max(1, parseInt(sp.get("page") || "1", 10) || 1);
   perPage.value = Math.max(1, parseInt(sp.get("per_page") || "25", 10) || 25);
@@ -628,11 +644,17 @@ const onSearch = () => {
 const clearSearch = () => {
   q.value = "";
   formatFilter.value = "";
+  languageFilter.value = "";
   page.value = 1;
   reload();
 };
 
 const onFormatFilterChange = () => {
+  page.value = 1;
+  reload();
+};
+
+const onLanguageFilterChange = () => {
   page.value = 1;
   reload();
 };

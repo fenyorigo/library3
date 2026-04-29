@@ -15,6 +15,7 @@ $pdo = pdo();
  * Inputs
  * - q:         free-text search (tokenized on whitespace)
  * - format:    exact BookCopies.format filter
+ * - language:  exact Books.language filter
  * - record_status: active|deleted|all (admins only for deleted/all)
  * - page:      1-based page index
  * - per:       page size (alias used by frontend)
@@ -25,6 +26,9 @@ $q        = isset($_GET['q']) ? trim((string)$_GET['q']) : '';
 $format_filter_raw = strtolower(trim((string)($_GET['format'] ?? '')));
 $allowed_formats = ['print', 'epub', 'mobi', 'azw3', 'pdf', 'djvu', 'lit', 'prc', 'rtf', 'odt'];
 $format_filter = in_array($format_filter_raw, $allowed_formats, true) ? $format_filter_raw : null;
+$language_filter_raw = strtolower(trim((string)($_GET['language'] ?? '')));
+$allowed_languages = ['unknown', 'hu', 'en', 'de', 'fr'];
+$language_filter = in_array($language_filter_raw, $allowed_languages, true) ? $language_filter_raw : null;
 $is_admin = (($me['role'] ?? '') === 'admin');
 $record_status_in = strtolower(trim((string)($_GET['record_status'] ?? 'active')));
 $record_status_filter = 'active';
@@ -135,6 +139,11 @@ if ($format_filter !== null) {
         AND bcf.format = :format_filter
     )";
   $params['format_filter'] = $format_filter;
+}
+
+if ($language_filter !== null) {
+  $where_chunks[] = "b.language = :language_filter";
+  $params['language_filter'] = $language_filter;
 }
 
 if (books_table_has_record_status($pdo)) {

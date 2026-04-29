@@ -39,6 +39,7 @@ export async function fetchBooks(params = {}) {
   const per = params.per ?? params.per_page ?? params.perPage;
   if (per) p.set('per', String(per));
   if (params.format)   p.set('format', params.format);
+  if (params.language) p.set('language', params.language);
   if (params.record_status) p.set('record_status', params.record_status);
   if (params.sort)     p.set('sort', params.sort);
   if (params.dir)      p.set('dir', params.dir);
