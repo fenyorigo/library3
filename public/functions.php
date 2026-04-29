@@ -683,7 +683,10 @@ function infer_import_language_from_metadata(?string $title, ?string $subtitle, 
     $haystack = ' ' . $needle . ' ';
 
     foreach ($parts as $part) {
-        if (strpos($part, 'è') !== false || strpos($part, 'È') !== false) return 'fr';
+        if (
+            strpos($part, 'è') !== false || strpos($part, 'È') !== false ||
+            strpos($part, 'ç') !== false || strpos($part, 'Ç') !== false
+        ) return 'fr';
         if (
             strpos($part, 'ä') !== false || strpos($part, 'Ä') !== false ||
             strpos($part, 'ß') !== false
@@ -702,12 +705,28 @@ function infer_import_language_from_metadata(?string $title, ?string $subtitle, 
         strpos($haystack, " l'") !== false ||
         strpos($haystack, " d'") !== false
     ) return 'fr';
-    if (strpos($haystack, ' der ') !== false || strpos($haystack, ' das ') !== false) return 'de';
+    if (
+        strpos($haystack, ' der ') !== false ||
+        strpos($haystack, ' das ') !== false ||
+        strpos($haystack, ' um ') !== false ||
+        strpos($haystack, ' von ') !== false ||
+        strpos($haystack, ' und ') !== false ||
+        strpos($haystack, ' im ') !== false
+    ) return 'de';
     if (
         strpos($haystack, ' the ') !== false ||
         strpos($haystack, ' of ') !== false ||
         strpos($haystack, ' for ') !== false ||
-        strpos($haystack, ' and ') !== false
+        strpos($haystack, ' and ') !== false ||
+        strpos($haystack, ' by ') !== false ||
+        strpos($haystack, ' to ') !== false ||
+        str_starts_with($needle, 'why ') ||
+        strpos($haystack, ' why ') !== false ||
+        strpos($haystack, ' but ') !== false ||
+        strpos($haystack, ' on ') !== false ||
+        strpos($haystack, "'s ") !== false ||
+        strpos($haystack, ' we ') !== false ||
+        strpos($haystack, ' my ') !== false
     ) return 'en';
     if (strpos($haystack, ' az ') !== false || strpos($haystack, ' és ') !== false) return 'hu';
 
