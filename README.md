@@ -1,99 +1,105 @@
 # BookCatalog v3
 
-BookCatalog v3 is based on **v2.6.4** (schema **2.3.5**) and extends the system to support **ebooks alongside print books** in a unified catalog.
+BookCatalog v3 is a PHP and Vue-based personal catalog application for managing **print books and ebooks in one shared catalog**.
 
-## Overview
+It is built on the v2 line, but extends the data model to support:
 
-BookCatalog is a **catalog system**, not a library manager.
+- mixed print and ebook records
+- multiple copies and multiple ebook formats per title
+- ebook file path tracking
+- language-aware imports
+- soft delete and restore workflows
 
-- It does **not store or manage ebook files**
-- It stores **metadata only**:
-  - authors
-  - title / subtitle
-  - format (print / ebook)
-  - file path (for ebooks)
-  - other bibliographic data
+## What It Is
 
-## What’s new in v3
+BookCatalog is a **catalog system**, not an ebook storage or DRM system.
 
-The main goal of v3 is to handle **print and ebook items in a single, unified model**.
+It stores metadata such as:
 
-Key changes:
+- title and subtitle
+- authors
+- publisher
+- language
+- print or ebook format
+- file path for ebook copies
+- notes, subjects, and placement data
 
-- Introduction of **bibliographic records**
-  - A single record can contain multiple copies (print and/or ebook)
-- Introduction of **book copies**
-  - Each format (print, epub, pdf, etc.) is stored as a separate copy
-- Support for **multiple ebook formats per title**
-- Addition of **language field**
-- Support for **file paths** for ebook copies
-- Logical delete (**soft delete**) support
+The application does **not** ingest or manage ebook binaries themselves. Ebook files stay in your own filesystem; the catalog only keeps their metadata and path references.
 
-### Master item concept
+## v3 Data Model
 
-- The **master** is always a **print item**, if one exists
-- If all print items are deleted:
-  - no new master is assigned
-  - ebooks are **not promoted to master**
-- Covers remain attached to the bibliographic record
+The main structural change in v3 is the split between **bibliographic records** and **copies**.
 
-## Versioning
+- One bibliographic record can represent a title once.
+- That record can contain one or more copies.
+- Copies may be print, epub, pdf, mobi, azw3, and other supported ebook formats.
+- Covers remain attached to the bibliographic record, not to an individual copy.
 
-- Application version: **3.0.0-dev**
-- Database schema: **3.0.0**
+### Master Item Rule
 
-## Import
+- If a print copy exists, the master item remains the print item.
+- If all print copies are deleted, ebooks are not promoted to master automatically.
+- Soft delete preserves record history and enables restore workflows.
 
-The import process remains compatible with v2.
+## Import Compatibility
 
-Supported inputs:
+BookCatalog v3 keeps the existing CSV-based workflow and remains compatible with earlier catalog exports.
 
-- v2-style CSV exports (print books)
-- v3-style CSV imports (ebooks and mixed records)
+Supported import styles:
 
-### NeoFinder ebook import
+- v2-style CSV exports for print-only catalogs
+- v3-style CSV files for mixed print and ebook records
 
-The repository includes a helper script to convert NeoFinder exports:
-00-basedata/scripts/convert_ebook_inventory.php
+During import, the system can infer language heuristically from title and subtitle metadata. The current heuristic is tuned mainly for:
 
-This script converts a NeoFinder TSV export into a CSV file compatible with BookCatalog v3 import.
+- Hungarian
+- English
+- German
+- French
 
-#### Usage
+Manual correction is still expected for ambiguous cases.
+
+## NeoFinder Ebook Conversion
+
+The repository includes a helper script for converting NeoFinder exports into BookCatalog v3 import CSV:
+
+`00-basedata/scripts/convert_ebook_inventory.php`
+
+Usage:
 
 ```bash
 php 00-basedata/scripts/convert_ebook_inventory.php <input.tsv> [output.csv]
+```
 
-Input must be a tab-delimited file with columns:
+Expected TSV header:
+
+```text
 Name    Path    Kind
+```
 
-Notes
-- Multiple ebook formats of the same title are grouped into a single record
-- Duplicate copies are skipped
-- Language is initially set to unknown and may be inferred during import
+What the converter does:
 
-Path handling
-NeoFinder exports may use legacy macOS : path separators.
-Path normalization is handled during import in v3.
+- parses filenames into author, title, and subtitle
+- groups multiple ebook formats of the same work into one record
+- skips duplicate copies
+- writes a v3-compatible import CSV
+- leaves language as `unknown` for later import-time inference
 
-Language detection
-- Language detection is heuristic-based and operates on title/subtitle.
-- Works best for Hungarian, English, German, and French
-- May produce:
-   - unknown results
-   - occasional misclassification
-Manual correction is expected for edge cases.
+Notes:
 
-Notes
-- The system prioritizes practical accuracy over complexity
-- Some ambiguity (e.g. French vs German vs Hungarian overlaps) is resolved intentionally using simple heuristics
-- Manual cleanup after import is part of the workflow
+- NeoFinder exports may contain legacy macOS `:` path separators.
+- Path normalization is handled during import.
+- Filename parsing supports hyphen, en dash, and em dash separators.
 
-Status
+## Status
+
 Current state:
-- Core v3 data model implemented
-- Ebook import pipeline working
-- Soft delete and restore implemented
-- NeoFinder conversion script available
-- Language heuristic implemented and validated on large datasets
-This is a development version (3.0.0-dev).
 
+- core v3 catalog model is implemented
+- ebook import pipeline is working
+- soft delete and restore are implemented
+- NeoFinder conversion tooling is included
+- import-time language inference is implemented
+
+Current application version: **3.0.0-dev**  
+Current schema version: **3.0.0**
