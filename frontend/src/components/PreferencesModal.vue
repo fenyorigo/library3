@@ -104,6 +104,14 @@
               Publisher
             </label>
             <label class="inline">
+              <input type="checkbox" v-model="form.show_language" />
+              Language
+            </label>
+            <label class="inline">
+              <input type="checkbox" v-model="form.show_format" />
+              Format
+            </label>
+            <label class="inline">
               <input type="checkbox" v-model="form.show_year" />
               Year
             </label>
@@ -177,6 +185,8 @@ const form = ref({
   show_series: true,
   show_is_hungarian: true,
   show_publisher: true,
+  show_language: false,
+  show_format: false,
   show_year: true,
   show_copy_count: false,
   show_status: true,
@@ -225,6 +235,8 @@ watch(
       show_series: typeof prefs?.show_series === "boolean" ? prefs.show_series : true,
       show_is_hungarian: typeof prefs?.show_is_hungarian === "boolean" ? prefs.show_is_hungarian : true,
       show_publisher: typeof prefs?.show_publisher === "boolean" ? prefs.show_publisher : true,
+      show_language: typeof prefs?.show_language === "boolean" ? prefs.show_language : false,
+      show_format: typeof prefs?.show_format === "boolean" ? prefs.show_format : false,
       show_year: typeof prefs?.show_year === "boolean" ? prefs.show_year : true,
       show_copy_count: typeof prefs?.show_copy_count === "boolean" ? prefs.show_copy_count : false,
       show_status: typeof prefs?.show_status === "boolean" ? prefs.show_status : true,
@@ -285,6 +297,8 @@ const save = async () => {
       show_series: form.value.show_series,
       show_is_hungarian: form.value.show_is_hungarian,
       show_publisher: form.value.show_publisher,
+      show_language: form.value.show_language,
+      show_format: form.value.show_format,
       show_year: form.value.show_year,
       show_copy_count: form.value.show_copy_count,
       show_status: form.value.show_status,

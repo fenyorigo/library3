@@ -37,6 +37,7 @@ try {
         'title',
         'subtitle',
         'series',
+        'language',
         'copy_count',
         'year_published',
         'isbn',
@@ -49,6 +50,7 @@ try {
 
     $author_key_present = array_key_exists('authors', $d);
     $subjects_key_present = array_key_exists('subjects', $d);
+    $copies_key_present = array_key_exists('copies', $d) && is_array($d['copies']);
     $authors_is_hu = array_key_exists('authors_is_hungarian', $d)
         ? (int)!!$d['authors_is_hungarian']
         : null;
@@ -71,6 +73,8 @@ try {
                 // allow null or int
                 $val = $d[$col];
                 $val = ($val === '' || $val === null) ? null : (int)$val;
+            } elseif ($col === 'language') {
+                $val = normalize_book_language((string)$d[$col]);
             } elseif ($col === 'copy_count') {
                 $val = (int)$d[$col];
                 if ($val < 1) $val = 1;
@@ -137,12 +141,12 @@ try {
         $params[':placement_id'] = $placement_id;
     }
 
-    if (!$sets && !$author_key_present && !$subjects_key_present) {
+    if (!$sets && !$author_key_present && !$subjects_key_present && !$copies_key_present) {
         json_fail('No updatable fields provided', 400);
     }
 
     $own_tx = false;
-    if (($author_key_present || $subjects_key_present) && !$pdo->inTransaction()) {
+    if (($author_key_present || $subjects_key_present || $copies_key_present) && !$pdo->inTransaction()) {
         $pdo->beginTransaction();
         $own_tx = true;
     }
@@ -182,6 +186,21 @@ try {
         }
     }
 
+    if ($copies_key_present && bookcopies_table_exists($pdo)) {
+        $saved_copies = replace_book_copies($pdo, $id, $d['copies']);
+        sync_book_copy_derived_fields($pdo, $id, $saved_copies);
+    } elseif ($placement_key_present || array_key_exists('copy_count', $d)) {
+        $physical_location = null;
+        if (array_key_exists('placement', $d) && is_array($d['placement'])) {
+            $physical_location = format_physical_location_from_placement(
+                isset($d['placement']['bookcase_no']) ? (int)$d['placement']['bookcase_no'] : null,
+                isset($d['placement']['shelf_no']) ? (int)$d['placement']['shelf_no'] : null
+            );
+        }
+        $copy_count = array_key_exists('copy_count', $d) ? max(1, (int)$d['copy_count']) : 1;
+        upsert_default_print_copy($pdo, $id, $copy_count, $physical_location);
+    }
+
     if ($authors_is_hu !== null) {
         $pdo->prepare("
             UPDATE Authors a
@@ -209,11 +228,14 @@ try {
     if ($own_tx) $pdo->commit();
 
     $affected_rows = isset($st) ? $st->rowCount() : 0;
+    $copies = fetch_book_copies($pdo, $id);
     json_out([
         'ok' => true,
         'data' => [
             'id' => $id,
             'affected_rows' => $affected_rows,
+            'copies' => $copies,
+            'copy_count' => total_book_copy_quantity($copies, 1),
         ],
     ]);
 

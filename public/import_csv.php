@@ -196,7 +196,7 @@ if ($method === 'GET') {
         <label>ID handling
             <select name="id_mode">
                 <option value="keep_ids">Use IDs from import file</option>
-                <option value="new_catalog">New catalog IDs (ignore imported IDs)</option>
+                <option value="new_catalog">Use the next free ID (ignore imported IDs)</option>
             </select>
         </label>
         <label><input type="checkbox" name="dry_run" value="1" checked> Dry run (validate only; don’t insert)</label>
@@ -257,6 +257,7 @@ try {
     $inserted = 0;
     $skipped = 0;
     $errors = [];
+    $warnings = [];
     $id_conflicts = [];
     $id_map = [];
     $covers_copied = 0;
@@ -295,8 +296,9 @@ try {
     $semi_norm = array_map($normalize_header, $semi_fields);
 
     $export_keys = [
-        'id','title','subtitle','series','copy_count','year','isbn','lccn','notes','publisher','authors','subjects',
-        'loaned_to','loaned_date','bookcase','shelf','cover_image','cover_thumb','cover_filename'
+        'id','title','subtitle','series','language','copy_count','year','isbn','lccn','notes','publisher','authors','subjects',
+        'record_status',
+        'loaned_to','loaned_date','bookcase','shelf','cover_image','cover_thumb','cover_filename','copies_json'
     ];
     $legacy_keys = ['title','subtitle','year_published','authors'];
 
@@ -352,6 +354,16 @@ try {
     };
 
     $cover_jobs = [];
+    $push_warning = static function (array &$warnings, int $line, string $warning): void {
+        if (count($warnings) < 50) {
+            $warnings[] = ['line' => $line, 'warning' => $warning];
+        }
+    };
+    $next_new_book_id = null;
+    if ($id_mode === 'new_catalog') {
+        $next_new_book_id = (int)$pdo->query('SELECT COALESCE(MAX(book_id), 0) + 1 FROM Books')->fetchColumn();
+        if ($next_new_book_id < 1) $next_new_book_id = 1;
+    }
 
     while (($row = fgetcsv($fh, 0, $delimiter, '"', '\\')) !== false) {
         $total++;
@@ -394,6 +406,8 @@ try {
             $year = $normalize_year($data['year_published'] ?? null);
             $authors_csv = N($data['authors'] ?? null);
             $series = null;
+            $language = 'unknown';
+            $record_status = 'active';
             $publisher_id = null;
             $isbn = null;
             $lccn = null;
@@ -403,6 +417,13 @@ try {
             $loaned_date = null;
             $subjects_csv = null;
             $copy_count = 1;
+            $copies_in = [[
+                'format' => 'print',
+                'quantity' => 1,
+                'physical_location' => null,
+                'file_path' => null,
+                'notes' => null,
+            ]];
             $source_old_id = null;
         } else {
             $id_in = (int)($data['id'] ?? 0);
@@ -410,6 +431,8 @@ try {
             $source_old_id = $id_in;
             $subtitle = N($data['subtitle'] ?? null);
             $series = N($data['series'] ?? null);
+            $language = normalize_book_language($data['language'] ?? 'unknown');
+            $record_status = normalize_book_record_status($data['record_status'] ?? 'active');
             $year = $normalize_year($data['year'] ?? ($data['year_published'] ?? null));
             $isbn = N($data['isbn'] ?? null);
             $lccn = N($data['lccn'] ?? null);
@@ -444,6 +467,30 @@ try {
                 }
             }
 
+            $copies_in = null;
+            $copies_json = N($data['copies_json'] ?? null);
+            if ($copies_json !== null) {
+                $decoded = json_decode($copies_json, true);
+                if (is_array($decoded)) {
+                    $copies_in = [];
+                    foreach ($decoded as $copy) {
+                        if (is_array($copy)) $copies_in[] = $copy;
+                    }
+                }
+            }
+            if ($copies_in === null || !$copies_in) {
+                $copies_in = [[
+                    'format' => 'print',
+                    'quantity' => $copy_count,
+                    'physical_location' => format_physical_location_from_placement(
+                        isset($bookcase_no) ? $bookcase_no : null,
+                        isset($shelf_no) ? $shelf_no : null
+                    ),
+                    'file_path' => null,
+                    'notes' => null,
+                ]];
+            }
+
             $cover_image_rel = N($data['cover_image'] ?? null);
             $cover_thumb_rel = N($data['cover_thumb'] ?? null);
             if ($cover_thumb_rel === null) {
@@ -454,17 +501,30 @@ try {
             }
         }
 
+        if ($language === 'unknown') {
+            $language = infer_import_language_from_metadata($title, $subtitle, $authors_csv);
+        }
+
         if ($dry_run) {
             continue;
         }
 
         try {
+            $pdo->beginTransaction();
             $book_id = null;
+            $restoring_existing_deleted = false;
+            $target_book_id = null;
 
             if ($id_mode === 'keep_ids' && $id_in !== null) {
-                $exists = $pdo->prepare('SELECT 1 FROM Books WHERE book_id = ? LIMIT 1');
+                $exists = $pdo->prepare(
+                    books_table_has_record_status($pdo)
+                        ? 'SELECT book_id, record_status FROM Books WHERE book_id = ? LIMIT 1 FOR UPDATE'
+                        : 'SELECT book_id, \'active\' AS record_status FROM Books WHERE book_id = ? LIMIT 1 FOR UPDATE'
+                );
                 $exists->execute([$id_in]);
-                if ((bool)$exists->fetchColumn()) {
+                $existing = $exists->fetch(PDO::FETCH_ASSOC);
+                if ($existing && normalize_book_record_status($existing['record_status'] ?? 'active') !== 'deleted') {
+                    $pdo->rollBack();
                     $skipped++;
                     if (count($errors) < 25) $errors[] = ['line' => $total, 'error' => 'book_id already exists'];
                     $id_conflicts[] = [
@@ -476,57 +536,138 @@ try {
                     ];
                     continue;
                 }
-
-                $stmt = $pdo->prepare(
-                    "INSERT INTO Books
-                      (book_id, title, subtitle, series, copy_count, publisher_id, year_published,
-                       isbn, lccn, notes, cover_image, cover_thumb, placement_id,
-                       loaned_to, loaned_date)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-                );
-                $stmt->execute([
-                    $id_in,
-                    $title,
-                    $subtitle,
-                    $series,
-                    $copy_count,
-                    $publisher_id,
-                    $year,
-                    $isbn,
-                    $lccn,
-                    $notes,
-                    null,
-                    null,
-                    $placement_id,
-                    $loaned_to,
-                    $loaned_date,
-                ]);
-                $book_id = $id_in;
+                if ($existing) {
+                    $restoring_existing_deleted = true;
+                    $stmt = $pdo->prepare(
+                        "UPDATE Books
+                            SET title = ?, subtitle = ?, series = ?, language = ?, copy_count = ?, publisher_id = ?,
+                                year_published = ?, isbn = ?, lccn = ?, notes = ?, placement_id = ?,
+                                record_status = ?, loaned_to = ?, loaned_date = ?
+                          WHERE book_id = ?"
+                    );
+                    $stmt->execute([
+                        $title,
+                        $subtitle,
+                        $series,
+                        $language,
+                        $copy_count,
+                        $publisher_id,
+                        $year,
+                        $isbn,
+                        $lccn,
+                        $notes,
+                        $placement_id,
+                        $record_status,
+                        $loaned_to,
+                        $loaned_date,
+                        $id_in,
+                    ]);
+                    $book_id = $id_in;
+                    $pdo->prepare('DELETE FROM Books_Authors WHERE book_id = ?')->execute([$book_id]);
+                    $pdo->prepare('DELETE FROM Books_Subjects WHERE book_id = ?')->execute([$book_id]);
+                } else {
+                    $stmt = $pdo->prepare(
+                        "INSERT INTO Books
+                          (book_id, title, subtitle, series, language, copy_count, publisher_id, year_published,
+                           isbn, lccn, notes, cover_image, cover_thumb, placement_id, record_status,
+                           loaned_to, loaned_date)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    );
+                    $stmt->execute([
+                        $id_in,
+                        $title,
+                        $subtitle,
+                        $series,
+                        $language,
+                        $copy_count,
+                        $publisher_id,
+                        $year,
+                        $isbn,
+                        $lccn,
+                        $notes,
+                        null,
+                        null,
+                        $placement_id,
+                        $record_status,
+                        $loaned_to,
+                        $loaned_date,
+                    ]);
+                    $book_id = $id_in;
+                }
             } else {
-                $stmt = $pdo->prepare(
-                    "INSERT INTO Books
-                      (title, subtitle, series, copy_count, publisher_id, year_published,
-                       isbn, lccn, notes, cover_image, cover_thumb, placement_id,
-                       loaned_to, loaned_date)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-                );
-                $stmt->execute([
-                    $title,
-                    $subtitle,
-                    $series,
-                    $copy_count,
-                    $publisher_id,
-                    $year,
-                    $isbn,
-                    $lccn,
-                    $notes,
-                    null,
-                    null,
-                    $placement_id,
-                    $loaned_to,
-                    $loaned_date,
-                ]);
-                $book_id = (int)$pdo->lastInsertId();
+                if ($id_mode === 'new_catalog' && $next_new_book_id !== null) {
+                    $target_book_id = $next_new_book_id++;
+                    $stmt = $pdo->prepare(
+                        "INSERT INTO Books
+                          (book_id, title, subtitle, series, language, copy_count, publisher_id, year_published,
+                           isbn, lccn, notes, cover_image, cover_thumb, placement_id, record_status,
+                           loaned_to, loaned_date)
+                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    );
+                    $stmt->execute([
+                        $target_book_id,
+                        $title,
+                        $subtitle,
+                        $series,
+                        $language,
+                        $copy_count,
+                        $publisher_id,
+                        $year,
+                        $isbn,
+                        $lccn,
+                        $notes,
+                        null,
+                        null,
+                        $placement_id,
+                        $record_status,
+                        $loaned_to,
+                        $loaned_date,
+                    ]);
+                    $book_id = $target_book_id;
+                } else {
+                    $stmt = $pdo->prepare(
+                        "INSERT INTO Books
+                          (title, subtitle, series, language, copy_count, publisher_id, year_published,
+                           isbn, lccn, notes, cover_image, cover_thumb, placement_id, record_status,
+                           loaned_to, loaned_date)
+                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    );
+                    $stmt->execute([
+                        $title,
+                        $subtitle,
+                        $series,
+                        $language,
+                        $copy_count,
+                        $publisher_id,
+                        $year,
+                        $isbn,
+                        $lccn,
+                        $notes,
+                        null,
+                        null,
+                        $placement_id,
+                        $record_status,
+                        $loaned_to,
+                        $loaned_date,
+                    ]);
+                    $book_id = (int)$pdo->lastInsertId();
+                }
+            }
+
+            if (bookcopies_table_exists($pdo)) {
+                $saved_copies = replace_book_copies($pdo, $book_id, $copies_in);
+                $sync = sync_book_copy_derived_fields($pdo, $book_id, $saved_copies);
+                $copy_count = (int)($sync['copy_count'] ?? $copy_count);
+            } else {
+                upsert_default_print_copy($pdo, $book_id, $copy_count, $copies_in[0]['physical_location'] ?? null);
+                $sync = sync_book_copy_derived_fields($pdo, $book_id);
+                $saved_copies = $sync['copies'] ?? [];
+                $copy_count = (int)($sync['copy_count'] ?? $copy_count);
+            }
+
+            if ($restoring_existing_deleted && $record_status === 'active' && !can_restore_book_from_copies($saved_copies ?? [])) {
+                $pdo->prepare("UPDATE Books SET record_status = 'deleted' WHERE book_id = ?")->execute([$book_id]);
+                $push_warning($warnings, $total, 'Restore kept record deleted because ebook paths are no longer valid and no print copy exists.');
             }
 
             if ($authors_csv) {
@@ -569,8 +710,12 @@ try {
                 ];
             }
 
+            $pdo->commit();
             $inserted++;
         } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
             if (count($errors) < 25) {
                 $errors[] = ['line' => $total, 'error' => $e->getMessage()];
             }
@@ -655,6 +800,7 @@ try {
             'inserted' => $dry_run ? 0 : $inserted,
             'skipped' => $skipped,
             'errors' => $errors,
+            'warnings' => $warnings,
             'id_conflicts' => $id_conflicts,
             'id_remaps' => $id_map,
             'covers_copied' => $dry_run ? 0 : $covers_copied,

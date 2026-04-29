@@ -79,11 +79,13 @@ try {
     // optionals
     $subtitle = N($d['subtitle'] ?? null);
     $series   = N($d['series'] ?? null);
+    $language = normalize_book_language($d['language'] ?? 'unknown');
     $isbn     = N($d['isbn'] ?? null);
     $lccn     = N($d['lccn'] ?? null);
     $notes    = N($d['notes'] ?? null);
     $copy_count = (int)($d['copy_count'] ?? 1);
     if ($copy_count < 1) $copy_count = 1;
+    $copies_in = isset($d['copies']) && is_array($d['copies']) ? $d['copies'] : null;
     $loaned_to = N($d['loaned_to'] ?? null);
     $loaned_date = N($d['loaned_date'] ?? null);
     if ($loaned_to === null) {
@@ -118,19 +120,24 @@ try {
     // cover fields (if client pre-fills; usually null at create)
     $cover_image_in = N($d['cover_image'] ?? null);
     $cover_thumb_in = N($d['cover_thumb'] ?? null);
+    $physical_location = format_physical_location_from_placement(
+        isset($d['placement']['bookcase_no']) ? (int)$d['placement']['bookcase_no'] : null,
+        isset($d['placement']['shelf_no']) ? (int)$d['placement']['shelf_no'] : null
+    );
 
     // INSERT — matches your schema (no added_date; no back_image)
     $stmt = $pdo->prepare("
         INSERT INTO Books
-          (title, subtitle, series, copy_count, publisher_id, year_published,
+          (title, subtitle, series, language, copy_count, publisher_id, year_published,
            isbn, lccn, notes, cover_image, cover_thumb, placement_id,
            loaned_to, loaned_date)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
     $stmt->execute([
         $title,
         $subtitle,
         $series,
+        $language,
         $copy_count,
         $publisher_id,
         $year_published,
@@ -145,6 +152,16 @@ try {
     ]);
 
     $book_id = (int)$pdo->lastInsertId();
+
+    if ($copies_in !== null && bookcopies_table_exists($pdo)) {
+        $saved_copies = replace_book_copies($pdo, $book_id, $copies_in);
+        $sync = sync_book_copy_derived_fields($pdo, $book_id, $saved_copies);
+        $copy_count = (int)($sync['copy_count'] ?? $copy_count);
+    } else {
+        upsert_default_print_copy($pdo, $book_id, $copy_count, $physical_location);
+        $sync = sync_book_copy_derived_fields($pdo, $book_id);
+        $copy_count = (int)($sync['copy_count'] ?? $copy_count);
+    }
 
     // Link authors if provided (this must NOT start its own TX if one is already open)
     if ($authors_csv) {

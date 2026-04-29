@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/functions.php';
 require __DIR__ . '/auth.php';
-require_login();
+$me = require_login();
 
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
@@ -95,6 +95,12 @@ if (!$server_side) {
  * - q, sort, dir  (same logic as list_books.php; sort allows series)
  */
 $q      = isset($_GET['q']) ? trim((string)$_GET['q']) : '';
+$is_admin = (($me['role'] ?? '') === 'admin');
+$record_status_in = strtolower(trim((string)($_GET['record_status'] ?? 'active')));
+$record_status_filter = 'active';
+if ($is_admin && in_array($record_status_in, ['active', 'deleted', 'all'], true)) {
+    $record_status_filter = $record_status_in;
+}
 $sort_in = strtolower((string)($_GET['sort'] ?? 'title'));
 $dir_in  = strtolower((string)($_GET['dir']  ?? 'asc'));
 $dir_sql = ($dir_in === 'desc') ? 'DESC' : 'ASC';
@@ -158,6 +164,14 @@ if ($q !== '') {
     }
 }
 
+if (books_table_has_record_status($pdo)) {
+    if ($record_status_filter === 'deleted') {
+        $where_chunks[] = "b.record_status = 'deleted'";
+    } elseif ($record_status_filter === 'active') {
+        $where_chunks[] = "b.record_status = 'active'";
+    }
+}
+
 $where_sql = $where_chunks ? ('WHERE ' . implode(' AND ', $where_chunks)) : '';
 
 /** MAIN SELECT */
@@ -165,6 +179,8 @@ $sql = "
 SELECT
   b.book_id AS id,
   b.title, b.subtitle, b.series,
+  " . (books_table_has_record_status($pdo) ? "b.record_status," : "'active' AS record_status,") . "
+  " . (books_table_has_language($pdo) ? "b.language," : "'unknown' AS language,") . "
   b.copy_count,
   b.year_published,
   b.isbn, b.lccn,
@@ -211,6 +227,7 @@ try {
     foreach ($params as $k => $v) { $st->bindValue(':' . $k, $v, PDO::PARAM_STR); }
     $st->execute();
     $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+    $copy_map = fetch_book_copies_map($pdo, array_map(static fn (array $row): int => (int)$row['id'], $rows));
 
 } catch (Throwable $e) {
     echo "ERROR: " . $e->getMessage();
@@ -230,13 +247,14 @@ if ($out === false) {
 /* Fix PHP 8.1+ deprecation: explicitly pass escape char */
 $bytes_written = 0;
 $bytes = fputcsv($out, [
-    'ID', 'Title', 'Subtitle', 'Series', 'Copy Count', 'Year', 'ISBN', 'LCCN', 'Notes',
-    'Publisher', 'Authors', 'Subjects', 'Loaned To', 'Loaned Date',
-    'Bookcase', 'Shelf', 'Cover Image', 'Cover Filename'
+    'ID', 'Title', 'Subtitle', 'Series', 'Language', 'Copy Count', 'Year', 'ISBN', 'LCCN', 'Notes',
+    'Publisher', 'Authors', 'Subjects', 'Loaned To', 'Loaned Date', 'Record Status',
+    'Bookcase', 'Shelf', 'Cover Image', 'Cover Filename', 'Copies JSON'
 ], ',', '"', "\\");
 $bytes_written += is_int($bytes) ? $bytes : 0;
 
 foreach ($rows as $r) {
+    $copies = $copy_map[(int)$r['id']] ?? [];
     $cover_fn = $r['cover_image'] ? basename($r['cover_image']) : '';
 
     $row = [
@@ -244,7 +262,8 @@ foreach ($rows as $r) {
         $r['title'],
         $r['subtitle'],
         $r['series'],
-        $r['copy_count'] ?? 1,
+        normalize_book_language($r['language'] ?? 'unknown'),
+        total_book_copy_quantity($copies, (int)($r['copy_count'] ?? 1)),
         $r['year_published'],
         $r['isbn'],
         $r['lccn'],
@@ -254,10 +273,12 @@ foreach ($rows as $r) {
         $r['subjects'],
         $r['loaned_to'],
         $r['loaned_date'],
+        normalize_book_record_status($r['record_status'] ?? 'active'),
         $r['bookcase_no'],
         $r['shelf_no'],
         $r['cover_image'],
         $cover_fn,                    // <--- NEW FINAL COLUMN
+        json_encode($copies, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
     ];
     $row = array_map('sanitize_csv_value', $row);
     $bytes = fputcsv($out, $row, ',', '"', "\\");

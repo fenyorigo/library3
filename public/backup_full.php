@@ -69,6 +69,8 @@ try {
     SELECT
       b.book_id AS id,
       b.title, b.subtitle, b.series,
+      " . (books_table_has_record_status($pdo) ? "b.record_status," : "'active' AS record_status,") . "
+      " . (books_table_has_language($pdo) ? "b.language," : "'unknown' AS language,") . "
       b.copy_count,
       b.year_published, b.isbn, b.lccn, b.notes,
       b.loaned_to, b.loaned_date,
@@ -86,6 +88,9 @@ try {
     $authors = $pdo->query("SELECT author_id, first_name, last_name, sort_name FROM Authors ORDER BY author_id")->fetchAll(PDO::FETCH_ASSOC);
     $publishers = $pdo->query("SELECT publisher_id, name FROM Publishers ORDER BY publisher_id")->fetchAll(PDO::FETCH_ASSOC);
     $subjects = $pdo->query("SELECT subject_id, name FROM Subjects ORDER BY subject_id")->fetchAll(PDO::FETCH_ASSOC);
+    $book_copies = bookcopies_table_exists($pdo)
+        ? $pdo->query("SELECT copy_id, book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at FROM BookCopies ORDER BY book_id, copy_id")->fetchAll(PDO::FETCH_ASSOC)
+        : [];
     $books_authors = $pdo->query("SELECT book_id, author_id, author_ord FROM Books_Authors ORDER BY book_id, author_ord")->fetchAll(PDO::FETCH_ASSOC);
     $books_subjects = $pdo->query("SELECT book_id, subject_id FROM Books_Subjects ORDER BY book_id, subject_id")->fetchAll(PDO::FETCH_ASSOC);
 } catch (Throwable $e) {
@@ -93,20 +98,28 @@ try {
 }
 
 // ---------- write temp JSON/CSV ----------
-$csv_books_header     = ['id','title','subtitle','series','copy_count','year_published','isbn','lccn','notes','publisher','loaned_to','loaned_date','bookcase_no','shelf_no','cover_image','cover_file']; // cover_file last
-$csv_books_rows       = array_map(function($b){
+$book_copies_map = [];
+foreach ($book_copies as $copy) {
+    $book_copies_map[(int)$copy['book_id']][] = $copy;
+}
+
+$csv_books_header     = ['id','title','subtitle','series','record_status','language','copy_count','year_published','isbn','lccn','notes','publisher','loaned_to','loaned_date','bookcase_no','shelf_no','cover_image','cover_file','copies_json']; // cover_file last
+$csv_books_rows       = array_map(function($b) use ($book_copies_map) {
     // cover_file is filename (last segment) or empty
     $cover_file = '';
     if (!empty($b['cover_image'])) {
         $parts = explode('/', $b['cover_image']);
         $cover_file = end($parts);
     }
+    $copies = $book_copies_map[(int)$b['id']] ?? [];
     return [
         'id'             => $b['id'],
         'title'          => $b['title'],
         'subtitle'       => $b['subtitle'],
         'series'         => $b['series'],
-        'copy_count'     => $b['copy_count'] ?? 1,
+        'record_status'  => normalize_book_record_status($b['record_status'] ?? 'active'),
+        'language'       => normalize_book_language($b['language'] ?? 'unknown'),
+        'copy_count'     => total_book_copy_quantity($copies, (int)($b['copy_count'] ?? 1)),
         'year_published' => $b['year_published'],
         'isbn'           => $b['isbn'],
         'lccn'           => $b['lccn'],
@@ -118,6 +131,7 @@ $csv_books_rows       = array_map(function($b){
         'shelf_no'       => $b['shelf_no'],
         'cover_image'    => $b['cover_image'],
         'cover_file'     => $cover_file,
+        'copies_json'    => json_encode($copies, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
     ];
 }, $books);
 $csv_books_path       = write_csv($csv_books_rows, $csv_books_header);
@@ -125,6 +139,7 @@ $csv_books_path       = write_csv($csv_books_rows, $csv_books_header);
 $csv_authors_path     = write_csv($authors,      ['author_id','first_name','last_name','sort_name']);
 $csv_publishers_path  = write_csv($publishers,   ['publisher_id','name']);
 $csv_subjects_path    = write_csv($subjects,     ['subject_id','name']);
+$csv_bookcopies_path  = write_csv($book_copies,  ['copy_id','book_id','format','quantity','physical_location','file_path','notes','created_at','updated_at']);
 $csv_ba_path          = write_csv($books_authors, ['book_id','author_id','author_ord']);
 $csv_bs_path          = write_csv($books_subjects,['book_id','subject_id']);
 
@@ -170,8 +185,9 @@ $meta = [
         'schema_version' => SCHEMA_VERSION,
     ],
     'counts'  => [
-        'books'      => count($books),
-        'authors'    => count($authors),
+            'books'      => count($books),
+            'book_copies'=> count($book_copies),
+            'authors'    => count($authors),
         'publishers' => count($publishers),
         'subjects'   => count($subjects),
         'links'      => [
@@ -191,6 +207,7 @@ Generated: {$generated_at}
 
 Includes:
 - books.csv  (flat export; last column is cover_file)
+- BookCopies.csv
 - authors.csv, publishers.csv, subjects.csv
 - Books_Authors.csv (with author_ord), Books_Subjects.csv
 - uploads/default-cover.jpg (if present)
@@ -204,6 +221,7 @@ $zip->addFromString('README.txt', $readme);
 
 // data files
 $zip->addFile($csv_books_path,      'data/books.csv');
+$zip->addFile($csv_bookcopies_path, 'data/BookCopies.csv');
 $zip->addFile($csv_authors_path,    'data/authors.csv');
 $zip->addFile($csv_publishers_path, 'data/publishers.csv');
 $zip->addFile($csv_subjects_path,   'data/subjects.csv');
@@ -250,6 +268,7 @@ $sha = function (string $abs_path, string $zip_path) use (&$checksums) {
 
 // hash the data files we added
 $sha($csv_books_path,      'data/books.csv');
+$sha($csv_bookcopies_path, 'data/BookCopies.csv');
 $sha($csv_authors_path,    'data/authors.csv');
 $sha($csv_publishers_path, 'data/publishers.csv');
 $sha($csv_subjects_path,   'data/subjects.csv');
@@ -274,6 +293,7 @@ clearstatcache(true, $zip_path);
 $size_bytes = is_file($zip_path) ? (int)filesize($zip_path) : 0;
 
 @unlink($csv_books_path);
+@unlink($csv_bookcopies_path);
 @unlink($csv_authors_path);
 @unlink($csv_publishers_path);
 @unlink($csv_subjects_path);

@@ -793,15 +793,13 @@ header('Content-Type: text/html; charset=utf-8');
       const others = selectedBooks.filter((b) => Number(b.book_id) !== state.selectedMasterId);
       if (!others.length) return;
 
-      const oldCount = Number(master.copy_count || 1);
-      const newCount = oldCount + others.length;
       const otherIds = others.map((b) => Number(b.book_id)).join(", ");
       const diff = computeDiffs(master, others);
 
       let text = "";
       if (!diff.hardDiff) {
         text += "The selected records appear identical based on catalog data.\n\n";
-        text += `This will keep Book ID ${master.book_id} as master, increase copy_count from ${oldCount} to ${newCount}, and remove Book IDs ${otherIds}.\n\n`;
+        text += `This will keep Book ID ${master.book_id} as master, merge included BookCopies rows/items into it, and remove Book IDs ${otherIds}.\n\n`;
         if (diff.lines.length) {
           text += "Informational differences:\n";
           text += diff.lines.join("\n") + "\n\n";

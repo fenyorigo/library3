@@ -90,6 +90,16 @@
               <span>Publisher</span><span class="chev">{{ chevron('publisher') }}</span>
             </button>
           </th>
+          <th v-if="columns.show_language" :aria-sort="ariaSort('language')">
+            <button class="th-btn" @click.prevent="toggleSort('language')">
+              <span>Language</span><span class="chev">{{ chevron('language') }}</span>
+            </button>
+          </th>
+          <th v-if="columns.show_format" :aria-sort="ariaSort('format')">
+            <button class="th-btn" @click.prevent="toggleSort('format')">
+              <span>Format</span><span class="chev">{{ chevron('format') }}</span>
+            </button>
+          </th>
 
           <th v-if="columns.show_year" class="w-year" :aria-sort="ariaSort('year')">
             <button class="th-btn" @click.prevent="toggleSort('year')">
@@ -167,6 +177,7 @@
               </div>
               <div class="twrap">
                 <div><strong>{{ b.title }}</strong></div>
+                <div class="muted small" v-if="b.format_summary">{{ b.format_summary }}</div>
               </div>
             </div>
           </td>
@@ -182,6 +193,8 @@
             <span v-else>{{ formatHu(b) }}</span>
           </td>
           <td v-if="columns.show_publisher" class="publisher-cell">{{ b.publisher || '—' }}</td>
+          <td v-if="columns.show_language">{{ b.language || 'unknown' }}</td>
+          <td v-if="columns.show_format">{{ b.format_summary || '—' }}</td>
           <td v-if="columns.show_year">{{ b.year_published || '—' }}</td>
           <td v-if="columns.show_copy_count">{{ b.copy_count || 1 }}</td>
 
@@ -204,7 +217,8 @@
             <template v-if="isAdmin">
               <button @click="emit('edit', b)">Edit</button>
               <button @click="emit('duplicate', b)">Duplicate</button>
-              <button @click="emit('delete', b)">Delete</button>
+              <button v-if="b.record_status === 'deleted'" @click="emit('restore', b)">Restore</button>
+              <button v-else @click="emit('delete', b)">Delete</button>
             </template>
           </td>
         </tr>
@@ -266,6 +280,7 @@ const emit = defineEmits([
   "edit",
   "duplicate",
   "delete",
+  "restore",
 ]);
 
 const props = defineProps({
@@ -289,6 +304,8 @@ const columnDefaults = {
   show_series: true,
   show_is_hungarian: true,
   show_publisher: true,
+  show_language: false,
+  show_format: false,
   show_year: true,
   show_copy_count: false,
   show_status: true,

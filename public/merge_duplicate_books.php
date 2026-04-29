@@ -192,12 +192,36 @@ try {
         $subjects_map[$book_id][] = (string)$r['name'];
     }
 
+    $copies_map = fetch_book_copies_map($pdo, $all_ids);
+
+    $book_has_print = [];
+    foreach ($all_ids as $book_id) {
+        $book_has_print[$book_id] = false;
+        foreach (($copies_map[$book_id] ?? []) as $copy) {
+            if (($copy['format'] ?? '') === 'print') {
+                $book_has_print[$book_id] = true;
+                break;
+            }
+        }
+    }
+
     $master_dup_key = merge_dup_key_for_book($by_id[$master_id], $author_key_map);
     foreach ($dup_ids as $id) {
         $k = merge_dup_key_for_book($by_id[$id], $author_key_map);
         if ($k !== $master_dup_key) {
             throw new InvalidArgumentException('Selected books do not belong to the same duplicate candidate group', 400);
         }
+    }
+
+    $group_has_print = false;
+    foreach ($all_ids as $book_id) {
+        if (!empty($book_has_print[$book_id])) {
+            $group_has_print = true;
+            break;
+        }
+    }
+    if ($group_has_print && empty($book_has_print[$master_id])) {
+        throw new InvalidArgumentException('When a duplicate group contains a print copy, the master must be a print record.', 400);
     }
 
     $profile = static function (array $book, array $author_cmp_map, array $subjects_map): array {
@@ -240,9 +264,29 @@ try {
     $differences_detected = count(array_diff($diff_fields, ['placement'])) > 0;
 
     $master_book = $by_id[$master_id];
-    $old_count = (int)($master_book['copy_count'] ?? 1);
-    if ($old_count < 1) $old_count = 1;
-    $new_count = $old_count + count($dup_ids);
+    $master_copies = $copies_map[$master_id] ?? [];
+    $old_count = total_book_copy_quantity($master_copies, (int)($master_book['copy_count'] ?? 1));
+    $old_print_quantity = 0;
+    $master_print_copy_id = null;
+    foreach ($master_copies as $copy) {
+        if (($copy['format'] ?? '') === 'print') {
+            $master_print_copy_id = (int)$copy['copy_id'];
+            $old_print_quantity = max(1, (int)$copy['quantity']);
+            break;
+        }
+    }
+
+    $merged_print_quantity = $old_print_quantity;
+    $new_count = $old_count;
+    foreach ($dup_ids as $dup_id) {
+        $dup_copies = $copies_map[$dup_id] ?? [];
+        $new_count += total_book_copy_quantity($dup_copies, (int)($by_id[$dup_id]['copy_count'] ?? 1));
+        foreach ($dup_copies as $copy) {
+            if (($copy['format'] ?? '') === 'print') {
+                $merged_print_quantity += max(1, (int)$copy['quantity']);
+            }
+        }
+    }
 
     $master_cover_image = trim((string)($master_book['cover_image'] ?? ''));
     $master_cover_thumb = trim((string)($master_book['cover_thumb'] ?? ''));
@@ -280,6 +324,50 @@ try {
         ]);
     }
 
+    if (bookcopies_table_exists($pdo)) {
+        if ($merged_print_quantity > 0) {
+            if ($master_print_copy_id !== null) {
+                $pdo->prepare("
+                    UPDATE BookCopies
+                    SET quantity = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE copy_id = ?
+                ")->execute([$merged_print_quantity, $master_print_copy_id]);
+            } else {
+                $pdo->prepare("
+                    INSERT INTO BookCopies (book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at)
+                    VALUES (?, 'print', ?, NULL, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ")->execute([$master_id, $merged_print_quantity]);
+            }
+        }
+
+        $dup_copy_stmt = $pdo->prepare("
+            SELECT format, quantity, physical_location, file_path, notes
+            FROM BookCopies
+            WHERE book_id = ?
+            ORDER BY copy_id ASC
+        ");
+        $ins_copy = $pdo->prepare("
+            INSERT INTO BookCopies (book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ");
+        foreach ($dup_ids as $dup_id) {
+            $dup_copy_stmt->execute([$dup_id]);
+            foreach ($dup_copy_stmt->fetchAll(PDO::FETCH_ASSOC) as $copy) {
+                if (($copy['format'] ?? '') === 'print') {
+                    continue;
+                }
+                $ins_copy->execute([
+                    $master_id,
+                    normalize_book_copy_format($copy['format'] ?? null),
+                    max(1, (int)($copy['quantity'] ?? 1)),
+                    N($copy['physical_location'] ?? null),
+                    N($copy['file_path'] ?? null),
+                    N($copy['notes'] ?? null),
+                ]);
+            }
+        }
+    }
+
     $dup_placeholders = [];
     $dup_params = [];
     foreach ($dup_ids as $i => $id) {
@@ -303,8 +391,10 @@ try {
 
     $removed_ids_text = implode(', ', $dup_ids);
     $merge_note = sprintf(
-        'Merged into Book ID %d, copy_count increased from %d to %d; removed Book IDs %s',
+        'Merged into Book ID %d, BookCopies.quantity(print) changed from %d to %d; total copies %d -> %d; removed Book IDs %s',
         $master_id,
+        $old_print_quantity,
+        $merged_print_quantity,
         $old_count,
         $new_count,
         $removed_ids_text
@@ -364,6 +454,8 @@ try {
     log_auth_event('book_merge_dup', (int)$me['uid'], (string)$me['username'], [
         'master_book_id' => $master_id,
         'merged_book_ids' => $dup_ids,
+        'bookcopies_print_quantity_old' => $old_print_quantity,
+        'bookcopies_print_quantity_new' => $merged_print_quantity,
         'copy_count_old' => $old_count,
         'copy_count_new' => $new_count,
         'differences_detected' => $differences_detected,
@@ -379,6 +471,8 @@ try {
             'removedBookIds' => $dup_ids,
             'oldCopyCount' => $old_count,
             'newCopyCount' => $new_count,
+            'oldPrintQuantity' => $old_print_quantity,
+            'newPrintQuantity' => $merged_print_quantity,
             'differencesDetected' => $differences_detected,
             'differenceFields' => $diff_fields,
             'deletedCoverPaths' => $deleted_paths,

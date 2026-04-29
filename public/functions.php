@@ -9,7 +9,7 @@ declare(strict_types=1);
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
 
-const SCHEMA_VERSION = '2.3.5';
+const SCHEMA_VERSION = '3.0.0';
 
 /* --------------------------- Error helpers --------------------------- */
 
@@ -464,6 +464,8 @@ function normalize_user_preferences(array $row): array {
         'show_series' => $bool($row['show_series'] ?? null, true),
         'show_is_hungarian' => $bool($row['show_is_hungarian'] ?? null, true),
         'show_publisher' => $bool($row['show_publisher'] ?? null, true),
+        'show_language' => $bool($row['show_language'] ?? null, false),
+        'show_format' => $bool($row['show_format'] ?? null, false),
         'show_year' => $bool($row['show_year'] ?? null, true),
         'show_copy_count' => $bool($row['show_copy_count'] ?? null, false),
         'show_status' => $bool($row['show_status'] ?? null, true),
@@ -478,6 +480,8 @@ function normalize_user_preferences(array $row): array {
 
 function fetch_user_preferences(PDO $pdo, int $user_id): array {
     static $has_show_copy_count = null;
+    static $has_show_language = null;
+    static $has_show_format = null;
     if ($has_show_copy_count === null) {
         try {
             $col = $pdo->prepare("
@@ -492,11 +496,45 @@ function fetch_user_preferences(PDO $pdo, int $user_id): array {
             $has_show_copy_count = false;
         }
     }
+    if ($has_show_language === null) {
+        try {
+            $col = $pdo->prepare("
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'UserPreferences'
+                  AND COLUMN_NAME = 'show_language'
+            ");
+            $col->execute();
+            $has_show_language = ((int)$col->fetchColumn() > 0);
+        } catch (Throwable $e) {
+            $has_show_language = false;
+        }
+    }
+    if ($has_show_format === null) {
+        try {
+            $col = $pdo->prepare("
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'UserPreferences'
+                  AND COLUMN_NAME = 'show_format'
+            ");
+            $col->execute();
+            $has_show_format = ((int)$col->fetchColumn() > 0);
+        } catch (Throwable $e) {
+            $has_show_format = false;
+        }
+    }
 
     $select_cols = "logo_path, bg_color, fg_color, text_size, per_page,
                     show_cover, show_subtitle, show_series, show_is_hungarian,
                     show_publisher, show_year, show_status, show_placement,
                     show_isbn, show_loaned_to, show_loaned_date, show_subjects, show_notes";
+    if ($has_show_language) {
+        $select_cols .= ", show_language";
+    }
+    if ($has_show_format) {
+        $select_cols .= ", show_format";
+    }
     if ($has_show_copy_count) {
         $select_cols .= ", show_copy_count";
     }
@@ -518,6 +556,8 @@ function fetch_user_preferences(PDO $pdo, int $user_id): array {
             'show_series' => true,
             'show_is_hungarian' => true,
             'show_publisher' => true,
+            'show_language' => false,
+            'show_format' => false,
             'show_year' => true,
             'show_copy_count' => false,
             'show_status' => true,
@@ -530,6 +570,531 @@ function fetch_user_preferences(PDO $pdo, int $user_id): array {
         ];
     }
     return normalize_user_preferences($row);
+}
+
+/* -------------------------- BookCopies helpers -------------------------- */
+
+function bookcopies_table_exists(PDO $pdo): bool {
+    static $exists = null;
+    if ($exists !== null) return $exists;
+
+    $st = $pdo->query("
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'BookCopies'
+    ");
+    $exists = (int)$st->fetchColumn() > 0;
+    return $exists;
+}
+
+function books_table_has_language(PDO $pdo): bool {
+    static $exists = null;
+    if ($exists !== null) return $exists;
+
+    $st = $pdo->query("
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Books'
+          AND COLUMN_NAME = 'language'
+    ");
+    $exists = (int)$st->fetchColumn() > 0;
+    return $exists;
+}
+
+function books_table_has_record_status(PDO $pdo): bool {
+    static $exists = null;
+    if ($exists !== null) return $exists;
+
+    $st = $pdo->query("
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Books'
+          AND COLUMN_NAME = 'record_status'
+    ");
+    $exists = (int)$st->fetchColumn() > 0;
+    return $exists;
+}
+
+function normalize_book_record_status(?string $status): string {
+    $status = strtolower(trim((string)$status));
+    $allowed = ['active', 'deleted'];
+    return in_array($status, $allowed, true) ? $status : 'active';
+}
+
+function normalize_book_language(?string $language): string {
+    $language = strtolower(trim((string)$language));
+    $allowed = ['unknown', 'hu', 'en', 'de', 'fr'];
+    return in_array($language, $allowed, true) ? $language : 'unknown';
+}
+
+function split_authors_csv(?string $authors_csv): array {
+    $s = trim((string)$authors_csv);
+    if ($s === '') return [];
+
+    // Prefer semicolons to separate multiple authors.
+    // If no semicolons, handle commas carefully to preserve "Last, First".
+    $parts = [];
+    if (strpos($s, ';') !== false) {
+        $parts = explode(';', $s);
+    } else {
+        $comma_count = substr_count($s, ',');
+        if ($comma_count === 0) {
+            $parts = [$s];
+        } else {
+            $pieces = array_map('trim', explode(',', $s));
+            $pieces = array_values(array_filter($pieces, function ($p) {
+                return $p !== '' && $p !== ',' && $p !== ';';
+            }));
+
+            if ($comma_count === 1 && count($pieces) >= 2) {
+                $parts = [$pieces[0] . ', ' . $pieces[1]];
+            } elseif (count($pieces) >= 2 && count($pieces) % 2 === 0) {
+                for ($i = 0; $i < count($pieces); $i += 2) {
+                    $parts[] = $pieces[$i] . ', ' . $pieces[$i + 1];
+                }
+            } else {
+                $parts = $pieces;
+            }
+        }
+    }
+
+    $names = [];
+    foreach ($parts as $p) {
+        $name = preg_replace('/\s+/', ' ', trim((string)$p));
+        if ($name === '' || $name === ',' || $name === ';') continue;
+        $names[] = $name;
+    }
+    return $names;
+}
+
+function infer_import_language_from_metadata(?string $title, ?string $subtitle, ?string $authors_csv, ?int $force_authors_is_hungarian = null): string {
+    $parts = array_values(array_filter([
+        trim((string)$title),
+        trim((string)$subtitle),
+    ], static fn (string $part): bool => $part !== ''));
+
+    if (!$parts) {
+        return 'unknown';
+    }
+
+    $joined = implode(' ', $parts);
+    $joined = str_replace(["\xE2\x80\x99", "\xE2\x80\x98"], "'", $joined);
+    $needle = mb_strtolower($joined, 'UTF-8');
+    $haystack = ' ' . $needle . ' ';
+
+    foreach ($parts as $part) {
+        if (strpos($part, 'è') !== false || strpos($part, 'È') !== false) return 'fr';
+        if (strpos($part, 'ä') !== false || strpos($part, 'Ä') !== false) return 'de';
+    }
+
+    if (
+        str_starts_with($needle, "l'") ||
+        str_starts_with($needle, "d'") ||
+        strpos($haystack, ' la ') !== false ||
+        strpos($haystack, ' les ') !== false ||
+        strpos($haystack, ' de ') !== false ||
+        strpos($haystack, ' du ') !== false ||
+        strpos($haystack, ' et ') !== false ||
+        strpos($haystack, ' en ') !== false ||
+        strpos($haystack, " l'") !== false ||
+        strpos($haystack, " d'") !== false
+    ) return 'fr';
+    if (strpos($haystack, ' der ') !== false || strpos($haystack, ' das ') !== false) return 'de';
+    if (
+        strpos($haystack, ' the ') !== false ||
+        strpos($haystack, ' of ') !== false ||
+        strpos($haystack, ' for ') !== false ||
+        strpos($haystack, ' and ') !== false
+    ) return 'en';
+    if (strpos($haystack, ' az ') !== false || strpos($haystack, ' és ') !== false) return 'hu';
+
+    foreach ($parts as $part) {
+        if (preg_match('/[áÁéÉíÍóÓőŐúÚűŰ]/u', $part)) return 'hu';
+    }
+
+    $names = split_authors_csv($authors_csv);
+    if ($names) {
+        $all_hungarian = true;
+        foreach ($names as $name) {
+            if ($force_authors_is_hungarian !== null) {
+                $is_hungarian = (bool)$force_authors_is_hungarian;
+            } else {
+                $is_hungarian = strpos($name, ',') === false;
+            }
+            if (!$is_hungarian) {
+                $all_hungarian = false;
+                break;
+            }
+        }
+        if ($all_hungarian) {
+            return 'hu';
+        }
+    }
+
+    return 'unknown';
+}
+
+function normalize_book_copy_format(?string $format): string {
+    $format = strtolower(trim((string)$format));
+    $allowed = ['print', 'epub', 'mobi', 'azw3', 'pdf', 'djvu', 'lit', 'prc', 'rtf', 'odt'];
+    return in_array($format, $allowed, true) ? $format : 'print';
+}
+
+function normalize_book_copy_file_path(?string $file_path): ?string {
+    $path = trim((string)$file_path);
+    if ($path === '') return null;
+
+    if (str_starts_with($path, 'file://')) {
+        $url_path = parse_url($path, PHP_URL_PATH);
+        if (is_string($url_path) && trim($url_path) !== '') {
+            $path = trim($url_path);
+        }
+    }
+
+    if (str_starts_with($path, '~/')) {
+        $home = getenv('HOME') ?: '';
+        if ($home !== '') {
+            return rtrim($home, '/\\') . '/' . substr($path, 2);
+        }
+        return $path;
+    }
+
+    $is_windows_drive = (bool)preg_match('/^[A-Za-z]:[\\\\\\/]/', $path);
+    if (!$is_windows_drive && strpos($path, ':') !== false && strpos($path, '/') === false && strpos($path, '\\') === false) {
+        $parts = array_values(array_filter(array_map('trim', explode(':', $path)), static fn (string $part): bool => $part !== ''));
+        if ($parts) {
+            return '/Volumes/' . implode('/', $parts);
+        }
+    }
+
+    return $path;
+}
+
+function format_physical_location_from_placement(?int $bookcase_no, ?int $shelf_no): ?string {
+    if ($bookcase_no === null || $shelf_no === null || $bookcase_no <= 0 || $shelf_no <= 0) {
+        return null;
+    }
+    return '#' . $bookcase_no . '/' . $shelf_no;
+}
+
+function parse_placement_from_physical_location(?string $physical_location): ?array {
+    $physical_location = trim((string)$physical_location);
+    if ($physical_location === '') return null;
+
+    if (preg_match('/^#?\s*(\d+)\s*\/\s*(\d+)$/', $physical_location, $m)) {
+        $bookcase_no = (int)$m[1];
+        $shelf_no = (int)$m[2];
+        if ($bookcase_no > 0 && $shelf_no > 0) {
+            return [
+                'bookcase_no' => $bookcase_no,
+                'shelf_no' => $shelf_no,
+            ];
+        }
+    }
+    return null;
+}
+
+function normalize_book_copy_input(array $copy, int $index = 0): array {
+    $format = normalize_book_copy_format($copy['format'] ?? null);
+    $quantity = (int)($copy['quantity'] ?? 1);
+    if ($quantity < 1) $quantity = 1;
+
+    return [
+        'copy_id' => isset($copy['copy_id']) && (int)$copy['copy_id'] > 0 ? (int)$copy['copy_id'] : null,
+        'format' => $format,
+        'quantity' => $quantity,
+        'physical_location' => N($copy['physical_location'] ?? null),
+        'file_path' => $format === 'print' ? null : normalize_book_copy_file_path($copy['file_path'] ?? null),
+        'notes' => N($copy['notes'] ?? null),
+        '_index' => $index,
+    ];
+}
+
+function fetch_book_copies_map(PDO $pdo, array $book_ids): array {
+    $book_ids = array_values(array_filter(array_map('intval', $book_ids), static fn (int $id): bool => $id > 0));
+    if (!$book_ids || !bookcopies_table_exists($pdo)) return [];
+
+    $placeholders = implode(',', array_fill(0, count($book_ids), '?'));
+    $st = $pdo->prepare("
+        SELECT copy_id, book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at
+        FROM BookCopies
+        WHERE book_id IN ($placeholders)
+        ORDER BY book_id ASC, FIELD(format, 'print', 'epub', 'mobi', 'azw3', 'pdf', 'djvu', 'lit', 'prc', 'rtf', 'odt'), copy_id ASC
+    ");
+    $st->execute($book_ids);
+
+    $map = [];
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $book_id = (int)$row['book_id'];
+        $row['copy_id'] = (int)$row['copy_id'];
+        $row['book_id'] = $book_id;
+        $row['quantity'] = max(1, (int)$row['quantity']);
+        $map[$book_id][] = $row;
+    }
+    return $map;
+}
+
+function fetch_book_copies(PDO $pdo, int $book_id): array {
+    $map = fetch_book_copies_map($pdo, [$book_id]);
+    return $map[$book_id] ?? [];
+}
+
+function summarize_book_formats(array $copies): string {
+    if (!$copies) return '';
+    $parts = [];
+    foreach ($copies as $copy) {
+        $format = normalize_book_copy_format($copy['format'] ?? null);
+        $quantity = max(1, (int)($copy['quantity'] ?? 1));
+        $parts[] = $format === 'print' ? "print x{$quantity}" : ($quantity > 1 ? "{$format} x{$quantity}" : $format);
+    }
+    return implode(', ', $parts);
+}
+
+function total_book_copy_quantity(array $copies, int $fallback = 1): int {
+    if (!$copies) return max(1, $fallback);
+    $total = 0;
+    foreach ($copies as $copy) {
+        $total += max(1, (int)($copy['quantity'] ?? 1));
+    }
+    return max(1, $total);
+}
+
+function find_first_print_copy(array $copies): ?array {
+    foreach ($copies as $copy) {
+        if (normalize_book_copy_format($copy['format'] ?? null) === 'print') {
+            return $copy;
+        }
+    }
+    return null;
+}
+
+function book_copy_file_path_exists(?string $file_path): bool {
+    $path = trim((string)$file_path);
+    if ($path === '') return false;
+
+    $candidates = [$path];
+
+    if (str_starts_with($path, 'file://')) {
+        $url_path = parse_url($path, PHP_URL_PATH);
+        if (is_string($url_path) && $url_path !== '') {
+            $candidates[] = $url_path;
+        }
+    }
+
+    if (str_starts_with($path, '~/')) {
+        $home = getenv('HOME') ?: '';
+        if ($home !== '') {
+            $candidates[] = rtrim($home, '/\\') . '/' . substr($path, 2);
+        }
+    }
+
+    if ($path[0] === '/' || preg_match('/^[A-Za-z]:[\\\\\\/]/', $path)) {
+        $candidates[] = $path;
+    } elseif (strpos($path, ':') !== false && strpos($path, '/') === false && strpos($path, '\\') === false) {
+        $parts = array_values(array_filter(array_map('trim', explode(':', $path)), static fn (string $part): bool => $part !== ''));
+        if ($parts) {
+            $joined = implode('/', $parts);
+            $candidates[] = '/' . $joined;
+            if (count($parts) >= 2) {
+                $candidates[] = '/Volumes/' . $joined;
+            }
+        }
+    } else {
+        $rel = ltrim(str_replace('\\', '/', $path), '/');
+        $candidates[] = dirname(__DIR__) . '/' . $rel;
+        $candidates[] = __DIR__ . '/' . $rel;
+    }
+
+    $seen = [];
+    foreach ($candidates as $candidate) {
+        $candidate = trim((string)$candidate);
+        if ($candidate === '' || isset($seen[$candidate])) continue;
+        $seen[$candidate] = true;
+        if (is_file($candidate)) return true;
+    }
+    return false;
+}
+
+function has_restorable_ebook_copy(array $copies): bool {
+    foreach ($copies as $copy) {
+        $format = normalize_book_copy_format($copy['format'] ?? null);
+        if ($format === 'print') continue;
+        if (normalize_book_copy_file_path($copy['file_path'] ?? null) !== null) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function can_restore_book_from_copies(array $copies): bool {
+    return find_first_print_copy($copies) !== null || has_restorable_ebook_copy($copies);
+}
+
+function sync_book_copy_derived_fields(PDO $pdo, int $book_id, ?array $copies = null): array {
+    if ($copies === null) {
+        $copies = fetch_book_copies($pdo, $book_id);
+    }
+
+    $print_copy = find_first_print_copy($copies);
+    $placement_id = null;
+    if ($print_copy !== null) {
+        $parsed = parse_placement_from_physical_location($print_copy['physical_location'] ?? null);
+        if ($parsed) {
+            $placement_id = getOrCreatePlacementId($pdo, $parsed);
+        }
+    }
+
+    $copy_count = $copies ? total_book_copy_quantity($copies, 1) : 0;
+    $upd = $pdo->prepare('UPDATE Books SET copy_count = ?, placement_id = ? WHERE book_id = ?');
+    $upd->execute([$copy_count, $placement_id, $book_id]);
+
+    return [
+        'copies' => $copies,
+        'copy_count' => $copy_count,
+        'placement_id' => $placement_id,
+        'has_print' => $print_copy !== null,
+    ];
+}
+
+function upsert_default_print_copy(PDO $pdo, int $book_id, int $quantity, ?string $physical_location = null): void {
+    if (!bookcopies_table_exists($pdo)) return;
+
+    $quantity = max(1, $quantity);
+    $sel = $pdo->prepare("
+        SELECT copy_id
+        FROM BookCopies
+        WHERE book_id = ? AND format = 'print'
+        ORDER BY copy_id ASC
+        LIMIT 1
+    ");
+    $sel->execute([$book_id]);
+    $copy_id = $sel->fetchColumn();
+
+    if ($copy_id) {
+        $upd = $pdo->prepare("
+            UPDATE BookCopies
+            SET quantity = ?, physical_location = ?, file_path = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE copy_id = ?
+        ");
+        $upd->execute([$quantity, $physical_location, (int)$copy_id]);
+        return;
+    }
+
+    $ins = $pdo->prepare("
+        INSERT INTO BookCopies (book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at)
+        VALUES (?, 'print', ?, ?, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ");
+    $ins->execute([$book_id, $quantity, $physical_location]);
+}
+
+function replace_book_copies(PDO $pdo, int $book_id, array $copies): array {
+    if (!bookcopies_table_exists($pdo)) return [];
+
+    $norm = [];
+    foreach ($copies as $index => $copy) {
+        if (!is_array($copy)) continue;
+        $norm[] = normalize_book_copy_input($copy, $index);
+    }
+    if (!$norm) {
+        $norm[] = normalize_book_copy_input([
+            'format' => 'print',
+            'quantity' => 1,
+        ]);
+    }
+
+    $del = $pdo->prepare('DELETE FROM BookCopies WHERE book_id = ?');
+    $del->execute([$book_id]);
+
+    $ins = $pdo->prepare("
+        INSERT INTO BookCopies
+            (book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at)
+        VALUES
+            (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ");
+
+    foreach ($norm as $copy) {
+        $ins->execute([
+            $book_id,
+            $copy['format'],
+            $copy['quantity'],
+            $copy['physical_location'],
+            $copy['file_path'],
+            $copy['notes'],
+        ]);
+    }
+
+    return fetch_book_copies($pdo, $book_id);
+}
+
+function delete_book_copy_record(PDO $pdo, int $copy_id): array {
+    $copies = [];
+    $book_id = 0;
+    $quantity_before = 0;
+    $decremented = false;
+    $deleted = false;
+
+    if (!bookcopies_table_exists($pdo)) {
+        return [
+            'ok' => false,
+            'book_id' => 0,
+            'copy_id' => $copy_id,
+            'decremented' => false,
+            'deleted' => false,
+            'quantity_before' => 0,
+            'quantity_after' => 0,
+            'copies' => [],
+        ];
+    }
+
+    $sel = $pdo->prepare("
+        SELECT copy_id, book_id, quantity
+        FROM BookCopies
+        WHERE copy_id = ?
+        LIMIT 1
+        FOR UPDATE
+    ");
+    $sel->execute([$copy_id]);
+    $row = $sel->fetch(PDO::FETCH_ASSOC);
+    if (!$row) {
+        return [
+            'ok' => true,
+            'book_id' => 0,
+            'copy_id' => $copy_id,
+            'decremented' => false,
+            'deleted' => false,
+            'quantity_before' => 0,
+            'quantity_after' => 0,
+            'copies' => [],
+        ];
+    }
+
+    $book_id = (int)$row['book_id'];
+    $quantity_before = max(1, (int)$row['quantity']);
+    if ($quantity_before > 1) {
+        $upd = $pdo->prepare("
+            UPDATE BookCopies
+            SET quantity = quantity - 1, updated_at = CURRENT_TIMESTAMP
+            WHERE copy_id = ? AND quantity > 1
+        ");
+        $upd->execute([$copy_id]);
+        $decremented = $upd->rowCount() > 0;
+    } else {
+        $del = $pdo->prepare('DELETE FROM BookCopies WHERE copy_id = ?');
+        $del->execute([$copy_id]);
+        $deleted = $del->rowCount() > 0;
+    }
+
+    $copies = fetch_book_copies($pdo, $book_id);
+    return [
+        'ok' => true,
+        'book_id' => $book_id,
+        'copy_id' => $copy_id,
+        'decremented' => $decremented,
+        'deleted' => $deleted,
+        'quantity_before' => $quantity_before,
+        'quantity_after' => $decremented ? ($quantity_before - 1) : 0,
+        'copies' => $copies,
+    ];
 }
 
 /* ---------------------- Placement get-or-create --------------------- */
@@ -611,8 +1176,22 @@ function parse_author_free_text(string $s, bool $is_hungarian = false): array {
             $first = '';
             $last  = $parts[0];
         } elseif ($is_hungarian) {
-            $last  = array_shift($parts);
-            $first = implode(' ', $parts);
+            $looks_short = static function (string $token): bool {
+                $token = trim($token);
+                if ($token === '') return false;
+                return mb_strlen($token, 'UTF-8') <= 2;
+            };
+
+            if (count($parts) >= 3 && $looks_short($parts[0])) {
+                $last = $parts[0] . ' ' . $parts[1];
+                $first = implode(' ', array_slice($parts, 2));
+            } elseif (count($parts) >= 3 && $looks_short($parts[count($parts) - 2])) {
+                $last = implode(' ', array_slice($parts, 0, -1));
+                $first = $parts[count($parts) - 1];
+            } else {
+                $last  = array_shift($parts);
+                $first = implode(' ', $parts);
+            }
         } else {
             $last  = array_pop($parts);
             $first = implode(' ', $parts);
@@ -655,7 +1234,7 @@ function getOrCreateAuthorIdFromFree(PDO $pdo, string $free_text, ?int $force_is
     if ($free_text === '') return null;
 
     $has_comma = (strpos($free_text, ',') !== false);
-    $is_hungarian = ($force_is_hungarian !== null) ? (int)!!$force_is_hungarian : ($has_comma ? 1 : 0);
+    $is_hungarian = ($force_is_hungarian !== null) ? (int)!!$force_is_hungarian : ($has_comma ? 0 : 1);
 
     [$first, $last, $sort] = parse_author_free_text($free_text, (bool)$is_hungarian);
     $display = format_author_display($first, $last, $is_hungarian);
@@ -769,46 +1348,7 @@ function getAuthorId(PDO $pdo, ?string $author_name, ?int $force_is_hungarian = 
 function attachAuthorsToBook(PDO $pdo, int $book_id, ?string $authors_csv, ?int $force_is_hungarian = null): void {
     if (!$book_id || !$authors_csv) return;
 
-    $s = trim($authors_csv);
-    if ($s === '') return;
-
-    // Prefer semicolons to separate multiple authors.
-    // If no semicolons, handle commas carefully to preserve "Last, First".
-    $parts = [];
-    if (strpos($s, ';') !== false) {
-        $parts = explode(';', $s);
-    } else {
-        $comma_count = substr_count($s, ',');
-        if ($comma_count === 0) {
-            $parts = [$s];
-        } else {
-            $pieces = array_map('trim', explode(',', $s));
-            $pieces = array_values(array_filter($pieces, function ($p) {
-                return $p !== '' && $p !== ',' && $p !== ';';
-            }));
-
-            if ($comma_count === 1 && count($pieces) >= 2) {
-                $parts = [$pieces[0] . ', ' . $pieces[1]];
-            } elseif (count($pieces) >= 2 && count($pieces) % 2 === 0) {
-                for ($i = 0; $i < count($pieces); $i += 2) {
-                    $parts[] = $pieces[$i] . ', ' . $pieces[$i + 1];
-                }
-            } else {
-                $parts = $pieces;
-            }
-        }
-    }
-
-    // Normalize each name, drop empties AND drop pure punctuation
-    $names = [];
-    foreach ($parts as $p) {
-        $name = preg_replace('/\s+/', ' ', trim($p));
-
-        // Remove stray punctuation-only tokens (like "" or "," or ";")
-        if ($name === '' || $name === ',' || $name === ';') continue;
-
-        $names[] = $name;
-    }
+    $names = split_authors_csv($authors_csv);
     if (!$names) return;
 
     $own_tx = false;

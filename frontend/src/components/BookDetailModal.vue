@@ -25,8 +25,36 @@
           <div class="meta-grid">
             <div><strong>Authors</strong><div>{{ book.authors || "—" }}</div></div>
             <div><strong>Publisher</strong><div>{{ book.publisher || "—" }}</div></div>
+            <div><strong>Language</strong><div>{{ book.language || "unknown" }}</div></div>
+            <div><strong>Record</strong><div>{{ book.record_status || "active" }}</div></div>
             <div><strong>Year</strong><div>{{ book.year_published || "—" }}</div></div>
             <div><strong>Copies</strong><div>{{ book.copy_count || 1 }}</div></div>
+            <div class="span-2">
+              <strong>Formats</strong>
+              <div v-if="book.copies && book.copies.length">
+                <table class="copies-table">
+                  <thead>
+                    <tr>
+                      <th>Format</th>
+                      <th>Qty</th>
+                      <th>Location</th>
+                      <th>File path</th>
+                      <th>Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="copy in book.copies" :key="copy.copy_id || `${copy.format}-${copy.file_path || ''}`">
+                      <td>{{ copy.format }}</td>
+                      <td>{{ copy.quantity || 1 }}</td>
+                      <td>{{ copy.physical_location || "—" }}</td>
+                      <td>{{ copy.file_path || "—" }}</td>
+                      <td>{{ copy.notes || "—" }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div v-else>—</div>
+            </div>
             <div><strong>ISBN</strong><div>{{ book.isbn || "—" }}</div></div>
             <div><strong>LCCN</strong><div>{{ book.lccn || "—" }}</div></div>
             <div><strong>Subjects</strong><div>{{ book.subjects || "—" }}</div></div>
@@ -103,6 +131,8 @@ onBeforeUnmount(() => {
 .meta-grid .span-2 { grid-column: 1 / span 2; }
 .meta-grid .notes { white-space: pre-wrap; }
 .small { font-size: .9em; }
+.copies-table { width: 100%; border-collapse: collapse; margin-top: .35rem; }
+.copies-table th, .copies-table td { border-bottom: 1px solid var(--btn-border); padding: .3rem .4rem; text-align: left; vertical-align: top; }
 .cover-img {
   width: 160px;
   height: 220px;

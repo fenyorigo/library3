@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/functions.php';
 require __DIR__ . '/auth.php';
-require_login();
+$me = require_login();
 
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors','0');
@@ -21,6 +21,8 @@ try {
     SELECT
       b.book_id AS id,
       b.title, b.subtitle, b.series,
+      " . (books_table_has_record_status($pdo) ? "b.record_status," : "'active' AS record_status,") . "
+      " . (books_table_has_language($pdo) ? "b.language," : "'unknown' AS language,") . "
       b.copy_count,
       b.year_published,
       b.isbn, b.lccn,
@@ -105,7 +107,18 @@ try {
         json_fail('Book not found', 404);
     }
 
+    $record_status = normalize_book_record_status($row['record_status'] ?? 'active');
+    $is_admin = (($me['role'] ?? '') === 'admin');
+    if ($record_status === 'deleted' && !$is_admin) {
+        json_fail('Book not found', 404);
+    }
+
     $row['has_cover'] = !empty($row['cover_image']);
+    $row['record_status'] = $record_status;
+    $row['language'] = normalize_book_language($row['language'] ?? 'unknown');
+    $row['copies'] = fetch_book_copies($pdo, $id);
+    $row['copy_count'] = total_book_copy_quantity($row['copies'], (int)($row['copy_count'] ?? 1));
+    $row['format_summary'] = summarize_book_formats($row['copies']);
 
     json_out([
         'ok' => true,

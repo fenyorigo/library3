@@ -62,6 +62,12 @@
           <div v-if="readonly" class="ro">{{ book.series || '—' }}</div>
           <input v-else v-model.trim="form.series" />
 
+          <label>Language</label>
+          <div v-if="readonly" class="ro">{{ displayLanguage(book.language) }}</div>
+          <select v-else v-model="form.language">
+            <option v-for="opt in LANGUAGE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+
           <!-- Publisher + Year -->
           <label>Publisher</label>
           <div v-if="readonly" class="ro span-1">{{ book.publisher || '—' }}</div>
@@ -111,10 +117,6 @@
           <label class="right-label">Year</label>
           <div v-if="readonly" class="ro">{{ book.year_published ?? '—' }}</div>
           <input v-else type="number" v-model.number="form.year_published" min="1601" max="2155" />
-
-          <label>Copies</label>
-          <div v-if="readonly" class="ro">{{ book.copy_count ?? 1 }}</div>
-          <input v-else type="number" v-model.number="form.copy_count" min="1" />
 
           <!-- ISBN + LCCN -->
           <label>ISBN</label>
@@ -178,6 +180,46 @@
           <label>Notes</label>
           <div v-if="readonly" class="ro span-3 prewrap">{{ book.notes || '—' }}</div>
           <textarea v-else class="span-3" v-model="form.notes" rows="3" placeholder="Notes"></textarea>
+
+          <label>Copies / Formats</label>
+          <div class="span-3">
+            <div v-if="readonly">
+              <div v-if="!bookCopies.length" class="ro">—</div>
+              <table v-else class="copies-table">
+                <thead>
+                  <tr>
+                    <th>Format</th>
+                    <th>Qty</th>
+                    <th>Physical location</th>
+                    <th>File path</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="copy in bookCopies" :key="copy.copy_id || `${copy.format}-${copy.file_path || ''}-${copy.physical_location || ''}`">
+                    <td>{{ copy.format }}</td>
+                    <td>{{ copy.quantity || 1 }}</td>
+                    <td>{{ copy.physical_location || "—" }}</td>
+                    <td>{{ copy.file_path || "—" }}</td>
+                    <td>{{ copy.notes || "—" }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-else class="copies-editor">
+              <div v-for="(copy, idx) in form.copies" :key="copy.local_id" class="copy-row">
+                <select v-model="copy.format">
+                  <option v-for="opt in FORMAT_OPTIONS" :key="opt" :value="opt">{{ opt }}</option>
+                </select>
+                <input v-model.number="copy.quantity" type="number" min="1" placeholder="Qty" />
+                <input v-model.trim="copy.physical_location" :disabled="copy.format !== 'print'" placeholder="Physical location" />
+                <input v-model.trim="copy.file_path" :disabled="copy.format === 'print'" placeholder="/path/to/file" />
+                <input v-model.trim="copy.notes" placeholder="Notes" />
+                <button type="button" class="ghost small-btn" @click="removeCopyRow(idx)">Delete</button>
+              </div>
+              <button type="button" class="ghost" @click="addCopyRow">Add copy / format</button>
+            </div>
+          </div>
 
           <!-- Added + Placement -->
           <label>Added</label>
@@ -270,6 +312,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { apiUrl, assetUrl } from "../api";
 
+const LANGUAGE_OPTIONS = [
+  { value: "unknown", label: "Unknown" },
+  { value: "hu", label: "Hungarian" },
+  { value: "en", label: "English" },
+  { value: "de", label: "German" },
+  { value: "fr", label: "French" },
+];
+
+const FORMAT_OPTIONS = ["print", "epub", "mobi", "azw3", "pdf", "djvu", "lit", "prc", "rtf", "odt"];
+
 const emit = defineEmits([
   "close",
   "switch-edit",
@@ -285,6 +337,40 @@ const props = defineProps({
   canManage: { type: Boolean, default: false },
 });
 
+let copyLocalId = 1;
+
+const nextCopyLocalId = () => {
+  const id = copyLocalId;
+  copyLocalId += 1;
+  return id;
+};
+
+const normalizeCopy = (copy = {}) => ({
+  local_id: nextCopyLocalId(),
+  copy_id: copy.copy_id ?? null,
+  format: FORMAT_OPTIONS.includes(copy.format) ? copy.format : "print",
+  quantity: Math.max(1, Number(copy.quantity || 1)),
+  physical_location: copy.physical_location || "",
+  file_path: copy.file_path || "",
+  notes: copy.notes || "",
+});
+
+const defaultPrintCopy = (b = {}) => {
+  const physical = b.bookcase_no != null && b.shelf_no != null ? `#${b.bookcase_no}/${b.shelf_no}` : "";
+  return normalizeCopy({
+    format: "print",
+    quantity: b.copy_count ?? 1,
+    physical_location: physical,
+  });
+};
+
+const initCopies = (b = {}) => {
+  if (Array.isArray(b.copies) && b.copies.length) {
+    return b.copies.map((copy) => normalizeCopy(copy));
+  }
+  return [defaultPrintCopy(b)];
+};
+
 const initForm = (b = {}, mode = "view") => {
   if (mode === "create") {
     return {
@@ -292,8 +378,8 @@ const initForm = (b = {}, mode = "view") => {
       title: b.title || "",
       subtitle: b.subtitle || "",
       series: b.series || "",
+      language: b.language || "unknown",
       year_published: b.year_published ?? null,
-      copy_count: b.copy_count ?? 1,
       isbn: b.isbn || "",
       lccn: b.lccn || "",
       notes: b.notes || "",
@@ -306,6 +392,7 @@ const initForm = (b = {}, mode = "view") => {
       loaned_date: b.loaned_date || "",
       bookcase_no: b.bookcase_no ?? null,
       shelf_no: b.shelf_no ?? null,
+      copies: initCopies(b),
     };
   }
   return {
@@ -313,8 +400,8 @@ const initForm = (b = {}, mode = "view") => {
     title: b.title || "",
     subtitle: b.subtitle || "",
     series: b.series || "",
+    language: b.language || "unknown",
     year_published: b.year_published ?? null,
-    copy_count: b.copy_count ?? 1,
     isbn: b.isbn || "",
     lccn: b.lccn || "",
     notes: b.notes || "",
@@ -327,6 +414,7 @@ const initForm = (b = {}, mode = "view") => {
     loaned_date: b.loaned_date || "",
     bookcase_no: b.bookcase_no ?? null,
     shelf_no: b.shelf_no ?? null,
+    copies: initCopies(b),
   };
 };
 
@@ -356,6 +444,7 @@ let authorTimer = null;
 const readonly = computed(() => props.mode === "view" || !props.canManage);
 const allowAuthorCreate = computed(() => (form.value.authors || "").trim().length >= 2);
 const safeId = computed(() => props.book?.id || props.book?.book_id || null);
+const bookCopies = computed(() => Array.isArray(props.book?.copies) ? props.book.copies : []);
 const authorsHuLabel = computed(() => {
   if (props.book?.authors_hu_flag === null || props.book?.authors_hu_flag === undefined) return "Mixed";
   return props.book.authors_hu_flag ? "Yes" : "No";
@@ -365,6 +454,11 @@ const loanStatus = computed(() => {
   const when = (form.value.loaned_date || "").trim();
   return who || when ? "Loaned" : "In collection";
 });
+
+const displayLanguage = (value) => {
+  const normalized = String(value || "unknown");
+  return LANGUAGE_OPTIONS.find((opt) => opt.value === normalized)?.label || "Unknown";
+};
 
 const coverSrc = computed(() => {
   const fallback = "uploads/default-cover.jpg";
@@ -599,6 +693,23 @@ const saveNewAuthor = async () => {
   }
 };
 
+const addCopyRow = () => {
+  form.value.copies.push(normalizeCopy({ format: "print", quantity: 1 }));
+};
+
+const removeCopyRow = (idx) => {
+  const copy = form.value.copies[idx];
+  if (!copy) return;
+  if (Number(copy.quantity || 1) > 1) {
+    copy.quantity = Number(copy.quantity || 1) - 1;
+    return;
+  }
+  form.value.copies.splice(idx, 1);
+  if (form.value.copies.length === 0) {
+    form.value.copies.push(defaultPrintCopy(form.value));
+  }
+};
+
 const save = () => {
   if (!form.value.title || !form.value.title.trim()) {
     alert("Title is required.");
@@ -615,8 +726,8 @@ const save = () => {
     title: form.value.title || null,
     subtitle: form.value.subtitle || null,
     series: form.value.series || null,
+    language: form.value.language || "unknown",
     year_published: normYear,
-    copy_count: Math.max(1, Number(form.value.copy_count || 1)),
     isbn: form.value.isbn || null,
     lccn: form.value.lccn || null,
   };
@@ -632,6 +743,29 @@ const save = () => {
     bookcase_no: form.value.bookcase_no || null,
     shelf_no: form.value.shelf_no || null,
   };
+  const physicalFromPlacement = payload.placement.bookcase_no && payload.placement.shelf_no
+    ? `#${payload.placement.bookcase_no}/${payload.placement.shelf_no}`
+    : "";
+  payload.copies = (form.value.copies || []).map((copy) => ({
+    copy_id: copy.copy_id ?? null,
+    format: copy.format || "print",
+    quantity: Math.max(1, Number(copy.quantity || 1)),
+    physical_location: copy.format === "print"
+      ? (physicalFromPlacement || (copy.physical_location || "").trim() || null)
+      : ((copy.physical_location || "").trim() || null),
+    file_path: copy.format === "print" ? null : ((copy.file_path || "").trim() || null),
+    notes: (copy.notes || "").trim() || null,
+  }));
+  if (!payload.copies.length) {
+    payload.copies = [{
+      format: "print",
+      quantity: 1,
+      physical_location: physicalFromPlacement || null,
+      file_path: null,
+      notes: null,
+    }];
+  }
+  payload.copy_count = payload.copies.reduce((sum, copy) => sum + Math.max(1, Number(copy.quantity || 1)), 0);
 
   if (form.value.publisher_id != null) {
     payload.publisher_id = form.value.publisher_id;
@@ -839,6 +973,35 @@ const onDelete = async (type) => {
   opacity: 0.6;
 }
 
+.copies-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.copies-table th,
+.copies-table td {
+  border-bottom: 1px solid rgba(0,0,0,.12);
+  padding: 0.35rem 0.45rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.copies-editor {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.copy-row {
+  display: grid;
+  grid-template-columns: 110px 80px minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1fr) 88px;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.small-btn {
+  padding: 0.45rem 0.55rem;
+}
+
 .ro { padding: .2rem 0; }
 .prewrap { white-space: pre-wrap; }
 
@@ -848,6 +1011,7 @@ const onDelete = async (type) => {
   }
   .span-3 { grid-column: 2 / span 1; }
   .span-4 { grid-column: 1 / span 2; }
+  .copy-row { grid-template-columns: 1fr; }
 }
 
 button { padding: .5rem .8rem; border-radius: 8px; border: 1px solid var(--btn-border); background: var(--btn-bg); cursor: pointer; color: var(--btn-text); }

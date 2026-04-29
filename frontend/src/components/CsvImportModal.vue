@@ -34,7 +34,7 @@
         <label class="block">Book ID handling
           <select v-model="idMode" :disabled="loading">
             <option value="keep_ids">Use IDs from import file (DR/full restore)</option>
-            <option value="new_catalog">New catalog IDs from 1.. (new catalog)</option>
+            <option value="new_catalog">Use the next free ID (ignore imported IDs)</option>
           </select>
         </label>
 

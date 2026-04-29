@@ -38,6 +38,8 @@ export async function fetchBooks(params = {}) {
   if (params.page)     p.set('page', String(params.page));
   const per = params.per ?? params.per_page ?? params.perPage;
   if (per) p.set('per', String(per));
+  if (params.format)   p.set('format', params.format);
+  if (params.record_status) p.set('record_status', params.record_status);
   if (params.sort)     p.set('sort', params.sort);
   if (params.dir)      p.set('dir', params.dir);
 
@@ -102,6 +104,29 @@ export async function deleteBook(id) {
   const res = await fetch(u.toString(), {
     method: 'POST',
     credentials: 'same-origin',
+  });
+
+  return parseJsonResponse(res);
+}
+
+export async function restoreBook(id) {
+  const u = new URL("restore_book.php", API_BASE);
+  u.searchParams.set("id", String(id));
+
+  const res = await fetch(u.toString(), {
+    method: "POST",
+    credentials: "same-origin",
+  });
+
+  return parseJsonResponse(res);
+}
+
+export async function deleteBookCopy(copyId) {
+  const res = await fetch(apiUrl("delete_book_copy.php"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ copy_id: copyId }),
   });
 
   return parseJsonResponse(res);
@@ -303,6 +328,8 @@ export async function updateUserPreferences(payload = {}, logoFile = null) {
   if (payload.show_series !== undefined) fd.append('show_series', payload.show_series ? '1' : '0');
   if (payload.show_is_hungarian !== undefined) fd.append('show_is_hungarian', payload.show_is_hungarian ? '1' : '0');
   if (payload.show_publisher !== undefined) fd.append('show_publisher', payload.show_publisher ? '1' : '0');
+  if (payload.show_language !== undefined) fd.append('show_language', payload.show_language ? '1' : '0');
+  if (payload.show_format !== undefined) fd.append('show_format', payload.show_format ? '1' : '0');
   if (payload.show_year !== undefined) fd.append('show_year', payload.show_year ? '1' : '0');
   if (payload.show_copy_count !== undefined) fd.append('show_copy_count', payload.show_copy_count ? '1' : '0');
   if (payload.show_status !== undefined) fd.append('show_status', payload.show_status ? '1' : '0');

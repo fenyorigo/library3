@@ -884,7 +884,7 @@ function create_database_and_schema(array $plan, string $app_root): void {
     }
 
     $app_version = resolve_app_version_label($app_root);
-    $schema_version = '2.3.5';
+    $schema_version = '3.0.0';
     $install_date = gmdate('c');
     $st = $db_pdo->prepare(
         "INSERT INTO SystemInfo (key_name, value) VALUES (?, ?)\n"

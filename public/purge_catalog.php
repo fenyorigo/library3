@@ -117,6 +117,7 @@ try {
         'Books_Authors',
         'Books_Subjects',
         'duplicate_review',
+        'BookCopies',
         'Books',
         'Authors',
         'Subjects',
@@ -136,8 +137,17 @@ try {
     }
     $pdo->commit();
 
+    $warnings = [];
     foreach (['Books', 'Authors', 'Subjects', 'Publishers', 'Placement'] as $table) {
-        $pdo->exec("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
+        try {
+            $affected = $pdo->exec("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
+            if ($affected === false) {
+                $error = $pdo->errorInfo();
+                $warnings[] = "Could not reset AUTO_INCREMENT for {$table}" . (!empty($error[2]) ? ": {$error[2]}" : '');
+            }
+        } catch (Throwable $e) {
+            $warnings[] = "Could not reset AUTO_INCREMENT for {$table}: " . $e->getMessage();
+        }
     }
 
     $uploads_root = realpath(__DIR__ . '/uploads') ?: (__DIR__ . '/uploads');
@@ -149,6 +159,7 @@ try {
     log_auth_event('catalog_purge', (int)$me['uid'], (string)$me['username'], [
         'actor_username' => (string)$me['username'],
         'deleted_rows' => $deleted_rows,
+        'warnings' => $warnings,
         'deleted_upload_files' => $removed_uploads['files'],
         'deleted_upload_cover_files' => $removed_uploads['covers'],
         'deleted_upload_thumb_files' => $removed_uploads['thumbs'],
@@ -160,6 +171,7 @@ try {
         'ok' => true,
         'data' => [
             'deleted_rows' => $deleted_rows,
+            'warnings' => $warnings,
             'deleted_upload_files' => $removed_uploads['files'],
             'deleted_upload_cover_files' => $removed_uploads['covers'],
             'deleted_upload_thumb_files' => $removed_uploads['thumbs'],

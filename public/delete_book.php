@@ -9,117 +9,126 @@ error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
 header('Content-Type: application/json; charset=utf-8');
 
-function books_has_copy_count(PDO $pdo): bool {
-    static $has_column = null;
-    if ($has_column !== null) return $has_column;
-    try {
-        $st = $pdo->query("
-            SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'Books'
-              AND COLUMN_NAME = 'copy_count'
-        ");
-        $has_column = ((int)$st->fetchColumn() > 0);
-    } catch (Throwable $e) {
-        $has_column = false;
-    }
-    return $has_column;
-}
-
-function rrmdir(string $dir): void {
+function rrmdir_book_delete(string $dir): void {
     if (!is_dir($dir)) return;
     $items = scandir($dir);
     if ($items === false) return;
     foreach ($items as $it) {
         if ($it === '.' || $it === '..') continue;
         $path = $dir . DIRECTORY_SEPARATOR . $it;
-        if (is_dir($path)) rrmdir($path);
-        else @unlink($path);
+        if (is_dir($path)) {
+            rrmdir_book_delete($path);
+        } else {
+            @unlink($path);
+        }
     }
     @rmdir($dir);
 }
 
 try {
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
         json_fail('Method Not Allowed', 405);
     }
 
-    // accept id from JSON, POST, or GET
     $json = json_in();
     $id = null;
-
-    if (isset($json['id']))           $id = (int)$json['id'];
-    elseif (isset($_POST['id']))      $id = (int)$_POST['id'];
-    elseif (isset($_GET['id']))       $id = (int)$_GET['id'];
-
+    if (isset($json['id'])) {
+        $id = (int)$json['id'];
+    } elseif (isset($_POST['id'])) {
+        $id = (int)$_POST['id'];
+    } elseif (isset($_GET['id'])) {
+        $id = (int)$_GET['id'];
+    }
     if (!$id || $id <= 0) {
         json_fail('Invalid or missing id', 400);
     }
 
     $pdo = pdo();
     $pdo->beginTransaction();
-
-    $has_copy_count = books_has_copy_count($pdo);
-    $select_sql = $has_copy_count
-        ? 'SELECT book_id, cover_image, cover_thumb, copy_count FROM Books WHERE book_id = ?'
-        : 'SELECT book_id, cover_image, cover_thumb FROM Books WHERE book_id = ?';
+    $select_sql = books_table_has_record_status($pdo)
+        ? 'SELECT book_id, record_status, copy_count FROM Books WHERE book_id = ?'
+        : 'SELECT book_id, copy_count FROM Books WHERE book_id = ?';
     $chk = $pdo->prepare($select_sql);
     $chk->execute([$id]);
     $row = $chk->fetch(PDO::FETCH_ASSOC);
     if (!$row) {
-        // treat as idempotent delete
-        $pdo->commit();
+        $pdo->rollBack();
         json_out([
             'ok' => true,
             'data' => [
                 'id' => $id,
                 'affected_rows' => 0,
+                'record_status' => 'deleted',
+                'book_removed' => false,
             ],
-            'message' => 'Not found (already deleted)',
+            'message' => 'Not found',
         ]);
     }
 
-    $copy_count = $has_copy_count ? max(1, (int)($row['copy_count'] ?? 1)) : 1;
-    $decremented = false;
-    $deleted = 0;
+    $current_status = normalize_book_record_status($row['record_status'] ?? 'active');
+    $copies = fetch_book_copies($pdo, $id);
+    $copy_count = $copies ? total_book_copy_quantity($copies, (int)($row['copy_count'] ?? 1)) : 0;
+    $book_removed = false;
 
-    if ($has_copy_count && $copy_count > 1) {
-        // When a book represents multiple physical copies, a delete request removes one copy.
-        $upd = $pdo->prepare('UPDATE Books SET copy_count = copy_count - 1 WHERE book_id = ? AND copy_count > 1');
-        $upd->execute([$id]);
-        $decremented = $upd->rowCount() > 0;
-    } else {
-        // Last copy: remove relations and delete the record.
-        $pdo->prepare('DELETE FROM Books_Authors  WHERE book_id=?')->execute([$id]);
-        $pdo->prepare('DELETE FROM Books_Subjects WHERE book_id=?')->execute([$id]);
-        $del = $pdo->prepare('DELETE FROM Books WHERE book_id=?');
+    if (!$copies) {
+        $pdo->prepare('DELETE FROM Books_Authors WHERE book_id = ?')->execute([$id]);
+        $pdo->prepare('DELETE FROM Books_Subjects WHERE book_id = ?')->execute([$id]);
+        $del = $pdo->prepare('DELETE FROM Books WHERE book_id = ?');
         $del->execute([$id]);
-        $deleted = $del->rowCount();
-    }
+        $affected_rows = $del->rowCount();
+        $book_removed = $affected_rows > 0;
+        $pdo->commit();
 
-    $pdo->commit();
-
-    if (!$decremented) {
-        // Physical files are removed only when the DB row is deleted.
-        $uploads_base = realpath(__DIR__ . '/uploads') ?: (__DIR__ . '/uploads');
-        $book_dir = $uploads_base . DIRECTORY_SEPARATOR . $id;
-        if (strpos(realpath($book_dir) ?: $book_dir, $uploads_base) === 0) {
-            rrmdir($book_dir);
+        if ($book_removed) {
+            $uploads_base = realpath(__DIR__ . '/uploads') ?: (__DIR__ . '/uploads');
+            $book_dir = $uploads_base . DIRECTORY_SEPARATOR . $id;
+            if (strpos(realpath($book_dir) ?: $book_dir, $uploads_base) === 0) {
+                rrmdir_book_delete($book_dir);
+            }
         }
+
+        json_out([
+            'ok' => true,
+            'data' => [
+                'id' => $id,
+                'affected_rows' => $affected_rows,
+                'copy_count_before' => 0,
+                'copy_count_after' => 0,
+                'record_status_before' => $current_status,
+                'record_status_after' => 'deleted',
+                'book_removed' => $book_removed,
+            ],
+            'message' => 'Book removed permanently because no item instances remained.',
+        ]);
     }
+
+    if (books_table_has_record_status($pdo)) {
+        $upd = $pdo->prepare("UPDATE Books SET record_status = 'deleted' WHERE book_id = ?");
+        $upd->execute([$id]);
+        $affected_rows = $upd->rowCount();
+    } else {
+        $affected_rows = 0;
+    }
+    $pdo->commit();
 
     json_out([
         'ok' => true,
         'data' => [
             'id' => $id,
-            'affected_rows' => $deleted,
-            'decremented' => $decremented,
+            'affected_rows' => $affected_rows,
             'copy_count_before' => $copy_count,
-            'copy_count_after' => $decremented ? ($copy_count - 1) : 0,
+            'copy_count_after' => $copy_count,
+            'record_status_before' => $current_status,
+            'record_status_after' => 'deleted',
+            'book_removed' => $book_removed,
         ],
-        'message' => $decremented ? 'Copy count decremented by one.' : 'Book deleted.',
+        'message' => $current_status === 'deleted'
+            ? 'Book is already marked deleted.'
+            : 'Book marked deleted.',
     ]);
 } catch (Throwable $e) {
-    if (isset($pdo) && $pdo->inTransaction()) $pdo->rollBack();
+    if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     json_fail($e->getMessage(), 500);
 }

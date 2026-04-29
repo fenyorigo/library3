@@ -35,6 +35,30 @@
         />
         <button :disabled="loading" @click="onSearch">Search</button>
         <button :disabled="loading || !q" @click="clearSearch">Clear</button>
+        <label class="inline-filter">
+          <span>Format</span>
+          <select v-model="formatFilter" :disabled="loading" @change="onFormatFilterChange">
+            <option value="">All</option>
+            <option value="print">print</option>
+            <option value="epub">epub</option>
+            <option value="mobi">mobi</option>
+            <option value="azw3">azw3</option>
+            <option value="pdf">pdf</option>
+            <option value="djvu">djvu</option>
+            <option value="lit">lit</option>
+            <option value="prc">prc</option>
+            <option value="rtf">rtf</option>
+            <option value="odt">odt</option>
+          </select>
+        </label>
+        <label v-if="isAdmin" class="inline-filter">
+          <span>Records</span>
+          <select v-model="recordStatusFilter" :disabled="loading" @change="onRecordStatusFilterChange">
+            <option value="active">Active</option>
+            <option value="deleted">Deleted</option>
+            <option value="all">All</option>
+          </select>
+        </label>
         <button @click="resetSort">Reset sort</button>
         <button v-if="isAdmin" class="primary" @click="openAdd">+ Add Book</button>
         <button v-if="isAdmin" @click="openCsvImport">Import books</button>
@@ -83,6 +107,7 @@
       @edit="onEdit"
       @duplicate="duplicateFrom"
       @delete="onDelete"
+      @restore="onRestore"
     />
 
     <BookDetailModal
@@ -208,10 +233,12 @@ import ChangePassword from "./components/ChangePassword.vue";
 import {
   addBook,
   deleteBook,
+  deleteBookCopy,
   fetchBook,
   fetchBooks,
   fetchUserPreferences,
   purgeCatalog,
+  restoreBook,
   updateBook,
   updateUserPreferences,
   assetUrl,
@@ -228,6 +255,8 @@ const perPageSource = ref("default");
 const sort = ref("title");
 const dir = ref("asc");
 const q = ref("");
+const formatFilter = ref("");
+const recordStatusFilter = ref("active");
 const loading = ref(false);
 const ignorePopStateOnce = ref(false);
 const showDetail = ref(false);
@@ -261,6 +290,8 @@ const preferences = ref({
   show_series: true,
   show_is_hungarian: true,
   show_publisher: true,
+  show_language: false,
+  show_format: false,
   show_year: true,
   show_copy_count: false,
   show_status: true,
@@ -473,6 +504,8 @@ const resetPreferences = () => {
     show_series: true,
     show_is_hungarian: true,
     show_publisher: true,
+    show_language: false,
+    show_format: false,
     show_year: true,
     show_copy_count: false,
     show_status: true,
@@ -512,6 +545,8 @@ const reload = async () => {
   try {
     const resp = await fetchBooks({
       q: q.value || undefined,
+      format: formatFilter.value || undefined,
+      record_status: isAdmin.value ? recordStatusFilter.value : "active",
       page: page.value,
       per: perPage.value,
       sort: sort.value,
@@ -529,6 +564,8 @@ const reload = async () => {
     if (!ignorePopStateOnce.value) {
       const p = new URLSearchParams();
       if (q.value) p.set("q", q.value);
+      if (formatFilter.value) p.set("format", formatFilter.value);
+      if (isAdmin.value && recordStatusFilter.value !== "active") p.set("record_status", recordStatusFilter.value);
       if (page.value !== 1) p.set("page", String(page.value));
       if (perPage.value !== 25) p.set("per_page", String(perPage.value));
       if (sort.value !== "id") p.set("sort", sort.value);
@@ -558,6 +595,8 @@ const applyUrlParams = () => {
   } else {
     initialQueryParam.value = null;
   }
+  formatFilter.value = p.get("format") || "";
+  recordStatusFilter.value = p.get("record_status") || "active";
   if (p.has("page")) page.value = Math.max(1, parseInt(p.get("page") || "1", 10) || 1);
   if (p.has("per_page")) {
     perPage.value = Math.max(1, parseInt(p.get("per_page") || "25", 10) || 25);
@@ -571,6 +610,8 @@ const onPopState = () => {
   const sp = new URLSearchParams(location.search);
   ignorePopStateOnce.value = true;
   q.value = sp.get("q") || "";
+  formatFilter.value = sp.get("format") || "";
+  recordStatusFilter.value = sp.get("record_status") || "active";
   page.value = Math.max(1, parseInt(sp.get("page") || "1", 10) || 1);
   perPage.value = Math.max(1, parseInt(sp.get("per_page") || "25", 10) || 25);
   perPageSource.value = "url";
@@ -586,6 +627,17 @@ const onSearch = () => {
 
 const clearSearch = () => {
   q.value = "";
+  formatFilter.value = "";
+  page.value = 1;
+  reload();
+};
+
+const onFormatFilterChange = () => {
+  page.value = 1;
+  reload();
+};
+
+const onRecordStatusFilterChange = () => {
   page.value = 1;
   reload();
 };
@@ -661,6 +713,7 @@ const onExportSelectedBundle = async () => {
     dir: dir.value || "asc",
   };
   if (q.value) params.q = q.value;
+  if (recordStatusFilter.value) params.record_status = recordStatusFilter.value;
   const url = buildBackupUrl("export_selected_bundle.php", params);
   await runBackupFlow(url, "selected CSV + covers");
 };
@@ -763,13 +816,16 @@ const onPurgeCatalog = async () => {
   try {
     const res = await purgeCatalog("DELETE");
     const data = res?.data || {};
+    const deletedRows = data.deleted_rows || {};
+    const removedBookRecords = Number(deletedRows.Books || 0);
+    const removedItemInstances = Number(deletedRows.BookCopies || 0);
     const removedFiles = Number(data.deleted_upload_files || 0);
     const removedCoverFiles = Number(data.deleted_upload_cover_files || 0);
     const removedThumbFiles = Number(data.deleted_upload_thumb_files || 0);
     const removedOtherFiles = Number(data.deleted_upload_other_files || 0);
     const removedDirs = Number(data.deleted_upload_dirs || 0);
     alert(
-      `Catalog purge completed.\nRemoved cover files: ${removedCoverFiles}\nRemoved thumbnail files: ${removedThumbFiles}\nRemoved other upload files: ${removedOtherFiles}\nRemoved upload files total: ${removedFiles}\nRemoved upload dirs: ${removedDirs}`
+      `Catalog purge completed.\nRemoved bibliographic records: ${removedBookRecords}\nRemoved item instances (print + ebook): ${removedItemInstances}\nRemoved cover files: ${removedCoverFiles}\nRemoved thumbnail files: ${removedThumbFiles}\nRemoved other upload files: ${removedOtherFiles}\nRemoved upload files total: ${removedFiles}\nRemoved upload dirs: ${removedDirs}`
     );
     page.value = 1;
     await reload();
@@ -865,26 +921,83 @@ const onCsvImported = async (payload) => {
   }
 };
 
+const describeCopyForDelete = (copy, index) => {
+  const format = String(copy?.format || "print");
+  const qty = Math.max(1, Number(copy?.quantity || 1));
+  const location = String(copy?.physical_location || "").trim();
+  const filePath = String(copy?.file_path || "").trim();
+  const parts = [format === "print" ? `print x${qty}` : (qty > 1 ? `${format} x${qty}` : format)];
+  if (location) parts.push(location);
+  if (filePath) parts.push(filePath);
+  return `${index + 1}. ${parts.join(" | ")}`;
+};
+
 const onDelete = async (book) => {
   if (!ensureAdmin()) return;
   const id = typeof book === "object" ? (book?.id ?? book?.book_id) : book;
-  const loaned_to = book?.loaned_to ? String(book.loaned_to).trim() : "";
-  const loaned_date = book?.loaned_date ? String(book.loaned_date).trim() : "";
+  let fullBook = book;
+  try {
+    fullBook = await loadFullBook(book);
+  } catch (e) {
+    if (e && e.status === 401) {
+      handleUnauthorized();
+      return;
+    }
+  }
+
+  const loaned_to = fullBook?.loaned_to ? String(fullBook.loaned_to).trim() : "";
+  const loaned_date = fullBook?.loaned_date ? String(fullBook.loaned_date).trim() : "";
   const loaned = !!(loaned_to || loaned_date);
-  let msg = `Delete book #${id}?`;
+  const copies = Array.isArray(fullBook?.copies) ? fullBook.copies : [];
+  let deleteMode = "book";
+  let selectedCopy = null;
+
+  if (copies.length > 1) {
+    const options = copies.map((copy, index) => describeCopyForDelete(copy, index)).join("\n");
+    const choice = prompt(
+      `Choose what to delete for book #${id}:\n${options}\nA. Mark bibliographic record deleted\n\nEnter copy number or A. Leave empty to cancel.`,
+      ""
+    );
+    if (choice === null) return;
+    const trimmed = String(choice).trim();
+    if (trimmed === "") return;
+    if (/^a$/i.test(trimmed)) {
+      deleteMode = "book";
+    } else {
+      const idx = Number.parseInt(trimmed, 10);
+      if (!Number.isFinite(idx) || idx < 1 || idx > copies.length) {
+        alert("Invalid selection.");
+        return;
+      }
+      selectedCopy = copies[idx - 1];
+      deleteMode = "copy";
+    }
+  }
+
+  let msg = deleteMode === "copy"
+    ? `Delete selected copy from book #${id}?`
+    : `Mark book #${id} as deleted?`;
   if (loaned) {
     const parts = [];
     if (loaned_to) parts.push(`to ${loaned_to}`);
     if (loaned_date) parts.push(`on ${loaned_date}`);
     const extra = parts.length ? ` (${parts.join(" ")})` : "";
-    msg = `Delete book #${id}? Book is loaned and not in collection${extra}.`;
+    msg = `${msg} Book is loaned and not in collection${extra}.`;
   }
   if (!confirm(msg)) return;
   try {
-    const res = await deleteBook(id);
-    if (res?.data?.decremented) {
-      const after = res?.data?.copy_count_after;
-      alert(`Book #${id}: one copy removed. Remaining copies: ${after}.`);
+    if (deleteMode === "copy" && selectedCopy?.copy_id) {
+      const res = await deleteBookCopy(Number(selectedCopy.copy_id));
+      if (res?.data?.book_removed) {
+        alert(`Book #${id}: last remaining copy removed, bibliographic record deleted.`);
+      } else if (res?.data?.decremented) {
+        alert(`Book #${id}: copy quantity decremented.`);
+      } else {
+        alert(`Book #${id}: selected copy removed. Remaining copies: ${res?.data?.copy_count ?? 0}.`);
+      }
+    } else {
+      const res = await deleteBook(id);
+      alert(res?.message || `Book #${id} marked deleted.`);
     }
     await reload();
   } catch (e) {
@@ -894,6 +1007,24 @@ const onDelete = async (book) => {
     }
     alert("Delete failed. See console.");
     console.error(e);
+  }
+};
+
+const onRestore = async (book) => {
+  if (!ensureAdmin()) return;
+  const id = typeof book === "object" ? (book?.id ?? book?.book_id) : book;
+  if (!id) return;
+  if (!confirm(`Restore book #${id}?`)) return;
+  try {
+    const res = await restoreBook(id);
+    alert(res?.message || `Book #${id} restored.`);
+    await reload();
+  } catch (e) {
+    if (e && e.status === 401) {
+      handleUnauthorized();
+      return;
+    }
+    alert(e && e.message ? e.message : "Restore failed.");
   }
 };
 
@@ -1088,6 +1219,19 @@ body {
 .search input {
   padding: 0.35rem 0.55rem;
   min-width: 260px;
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.inline-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.inline-filter select {
+  padding: 0.35rem 0.45rem;
   border: 1px solid var(--btn-border);
   border-radius: 6px;
   background: #fff;
