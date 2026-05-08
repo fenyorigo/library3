@@ -9,6 +9,30 @@ export function apiUrl(path) {
   return new URL(path, API_BASE).toString();
 }
 
+let _csrfToken = '';
+
+export function setCsrfToken(token) {
+  _csrfToken = token || '';
+}
+
+function csrfHeader() {
+  return _csrfToken ? { 'X-CSRF-Token': _csrfToken } : {};
+}
+
+async function apiFetch(url, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const isPost = method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
+  const headers = {
+    ...(isPost ? csrfHeader() : {}),
+    ...(options.headers || {}),
+  };
+  return fetch(url, {
+    credentials: 'same-origin',
+    ...options,
+    headers,
+  });
+}
+
 async function parseJsonResponse(res) {
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json.ok === false) {
@@ -44,14 +68,14 @@ export async function fetchBooks(params = {}) {
   if (params.sort)     p.set('sort', params.sort);
   if (params.dir)      p.set('dir', params.dir);
 
-  const res = await fetch(u.toString(), { credentials: 'same-origin' });
+  const res = await apiFetch(u.toString(), { credentials: 'same-origin' });
   return parseJsonResponse(res);
 }
 
 export async function fetchBook(id) {
   const u = new URL('get_book.php', API_BASE);
   u.searchParams.set('id', String(id));
-  const res = await fetch(u.toString(), { credentials: 'same-origin' });
+  const res = await apiFetch(u.toString(), { credentials: 'same-origin' });
   return parseJsonResponse(res);
 }
 
@@ -62,7 +86,7 @@ export async function addBook(payload = {}, coverFile = null) {
     const fd = new FormData();
     fd.append("payload", JSON.stringify(payload));
     fd.append("image", coverFile);
-    const res = await fetch(apiUrl("addBook.php"), {
+    const res = await apiFetch(apiUrl("addBook.php"), {
       method: "POST",
       body: fd,
       credentials: "same-origin",
@@ -70,7 +94,7 @@ export async function addBook(payload = {}, coverFile = null) {
     return parseJsonResponse(res);
   }
 
-  const res = await fetch(apiUrl("addBook.php"), {
+  const res = await apiFetch(apiUrl("addBook.php"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -86,7 +110,7 @@ export async function updateBook(payload = {}) {
   const id = payload.id ?? payload.book_id;
   const body = { ...payload, id, book_id: id };
 
-  const res = await fetch(apiUrl('update_book.php'), {
+  const res = await apiFetch(apiUrl('update_book.php'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
@@ -102,7 +126,7 @@ export async function deleteBook(id) {
   const u = new URL('delete_book.php', API_BASE);
   u.searchParams.set('id', String(id));
 
-  const res = await fetch(u.toString(), {
+  const res = await apiFetch(u.toString(), {
     method: 'POST',
     credentials: 'same-origin',
   });
@@ -114,7 +138,7 @@ export async function restoreBook(id) {
   const u = new URL("restore_book.php", API_BASE);
   u.searchParams.set("id", String(id));
 
-  const res = await fetch(u.toString(), {
+  const res = await apiFetch(u.toString(), {
     method: "POST",
     credentials: "same-origin",
   });
@@ -123,7 +147,7 @@ export async function restoreBook(id) {
 }
 
 export async function deleteBookCopy(copyId) {
-  const res = await fetch(apiUrl("delete_book_copy.php"), {
+  const res = await apiFetch(apiUrl("delete_book_copy.php"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -136,7 +160,7 @@ export async function deleteBookCopy(copyId) {
 /* -------------------- SUGGEST -------------------- */
 
 async function getJSON(path) {
-  const res = await fetch(apiUrl(path), { credentials: 'same-origin' });
+  const res = await apiFetch(apiUrl(path), { credentials: 'same-origin' });
   const json = await parseJsonResponse(res);
   return json.data;
 }
@@ -152,7 +176,7 @@ export async function suggestAuthors(q) {
 }
 
 export async function createAuthor(payload = {}) {
-  const res = await fetch(apiUrl('create_author.php'), {
+  const res = await apiFetch(apiUrl('create_author.php'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
@@ -173,7 +197,7 @@ export async function fetchAuthors({ q = "", page = 1, per = 50, sort = "name", 
 }
 
 export async function deleteAuthor(authorId) {
-  const res = await fetch(apiUrl("delete_author.php"), {
+  const res = await apiFetch(apiUrl("delete_author.php"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -183,7 +207,7 @@ export async function deleteAuthor(authorId) {
 }
 
 export async function updateAuthor(authorId, payload = {}) {
-  const res = await fetch(apiUrl("update_author.php"), {
+  const res = await apiFetch(apiUrl("update_author.php"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -195,7 +219,7 @@ export async function updateAuthor(authorId, payload = {}) {
 /* -------------------- AUTH -------------------- */
 
 export async function login(username, password) {
-  const res = await fetch(apiUrl('login.php'), {
+  const res = await apiFetch(apiUrl('login.php'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
@@ -206,7 +230,7 @@ export async function login(username, password) {
 }
 
 export async function logout() {
-  const res = await fetch(apiUrl('logout.php'), {
+  const res = await apiFetch(apiUrl('logout.php'), {
     method: 'POST',
     credentials: 'same-origin',
   });
@@ -215,7 +239,7 @@ export async function logout() {
 }
 
 export async function me() {
-  const res = await fetch(apiUrl('me.php'), {
+  const res = await apiFetch(apiUrl('me.php'), {
     credentials: 'same-origin',
   });
 
@@ -225,7 +249,7 @@ export async function me() {
 /* -------------------- USERS -------------------- */
 
 export async function listUsers() {
-  const res = await fetch(apiUrl('list_users.php'), {
+  const res = await apiFetch(apiUrl('list_users.php'), {
     credentials: 'same-origin',
   });
   return parseJsonResponse(res);
@@ -242,12 +266,12 @@ export async function listAuthEvents(params = {}) {
   if (params.user_id) p.set('user_id', String(params.user_id));
   if (params.q) p.set('q', String(params.q));
 
-  const res = await fetch(u.toString(), { credentials: 'same-origin' });
+  const res = await apiFetch(u.toString(), { credentials: 'same-origin' });
   return parseJsonResponse(res);
 }
 
 export async function purgeAuthEvents(months) {
-  const res = await fetch(apiUrl('purge_auth_events.php'), {
+  const res = await apiFetch(apiUrl('purge_auth_events.php'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
@@ -257,7 +281,7 @@ export async function purgeAuthEvents(months) {
 }
 
 export async function purgeCatalog(confirm = "DELETE") {
-  const res = await fetch(apiUrl("purge_catalog.php"), {
+  const res = await apiFetch(apiUrl("purge_catalog.php"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
@@ -267,7 +291,7 @@ export async function purgeCatalog(confirm = "DELETE") {
 }
 
 export async function createUser(payload = {}) {
-  const res = await fetch(apiUrl('create_user_api.php'), {
+  const res = await apiFetch(apiUrl('create_user_api.php'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
@@ -277,7 +301,7 @@ export async function createUser(payload = {}) {
 }
 
 export async function updateUser(payload = {}) {
-  const res = await fetch(apiUrl('update_user.php'), {
+  const res = await apiFetch(apiUrl('update_user.php'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
@@ -287,7 +311,7 @@ export async function updateUser(payload = {}) {
 }
 
 export async function deleteUser(userId) {
-  const res = await fetch(apiUrl('delete_user.php'), {
+  const res = await apiFetch(apiUrl('delete_user.php'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
@@ -297,7 +321,7 @@ export async function deleteUser(userId) {
 }
 
 export async function changePassword(payload = {}) {
-  const res = await fetch(apiUrl('change_password.php'), {
+  const res = await apiFetch(apiUrl('change_password.php'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
@@ -307,7 +331,7 @@ export async function changePassword(payload = {}) {
 }
 
 export async function adminResetPassword(payload = {}) {
-  const res = await fetch(apiUrl('admin_reset_password.php'), {
+  const res = await apiFetch(apiUrl('admin_reset_password.php'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
@@ -343,7 +367,7 @@ export async function updateUserPreferences(payload = {}, logoFile = null) {
   if (payload.remove_logo) fd.append('remove_logo', '1');
   if (logoFile) fd.append('logo', logoFile);
 
-  const res = await fetch(apiUrl('user_preferences.php'), {
+  const res = await apiFetch(apiUrl('user_preferences.php'), {
     method: 'POST',
     credentials: 'same-origin',
     body: fd,
@@ -353,7 +377,7 @@ export async function updateUserPreferences(payload = {}, logoFile = null) {
 }
 
 export async function fetchUserPreferences() {
-  const res = await fetch(apiUrl("user_preferences.php"), {
+  const res = await apiFetch(apiUrl("user_preferences.php"), {
     credentials: "same-origin",
   });
   return parseJsonResponse(res);
@@ -366,7 +390,7 @@ export async function fetchOrphanMaintenance() {
 }
 
 async function postMaintenance(payload) {
-  const res = await fetch(apiUrl('orphan_maintenance.php'), {
+  const res = await apiFetch(apiUrl('orphan_maintenance.php'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',

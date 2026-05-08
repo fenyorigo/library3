@@ -40,7 +40,8 @@ public/dist/
 frontend/dist/
 
 # Uploads & generated content (CONTENT, not source)
-public/uploads/
+public/uploads/*
+!public/uploads/.htaccess
 downloaded-covers/
 import_staged_covers.php
 

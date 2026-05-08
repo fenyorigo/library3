@@ -71,10 +71,55 @@ function start_secure_session(): void {
     }
 
     session_start();
+    csrf_token_ensure();
+    header('X-Frame-Options: DENY');
+    header('X-Content-Type-Options: nosniff');
+    header('X-XSS-Protection: 1; mode=block');
+    header("Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; object-src 'none'");
+}
+
+function csrf_token_ensure(): string {
+    if (empty($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return (string)$_SESSION['csrf_token'];
+}
+
+function require_csrf(): void {
+    $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? ''));
+    if (in_array($method, ['GET', 'HEAD', 'OPTIONS'], true)) return;
+    $token = (string)($_SERVER['HTTP_X_CSRF_TOKEN'] ?? '');
+    $session_token = (string)($_SESSION['csrf_token'] ?? '');
+    if ($session_token === '' || !hash_equals($session_token, $token)) {
+        json_fail('CSRF token mismatch', 403);
+    }
 }
 
 function auth_failure_delay(): void {
     usleep(200000);
+}
+
+function request_ip(): string {
+    $cf = trim((string)($_SERVER['HTTP_CF_CONNECTING_IP'] ?? ''));
+    if ($cf !== '') return $cf;
+    return trim((string)($_SERVER['REMOTE_ADDR'] ?? ''));
+}
+
+function login_rate_limit_check(PDO $pdo, string $ip): void {
+    if (!auth_events_table_exists($pdo)) return;
+    $st = $pdo->prepare("
+        SELECT COUNT(*) FROM AuthEvents
+        WHERE ip_address = ?
+          AND event_type = 'login_failed'
+          AND created_at >= UTC_TIMESTAMP() - INTERVAL 15 MINUTE
+    ");
+    $st->execute([$ip]);
+    if ((int)$st->fetchColumn() >= 10) {
+        http_response_code(429);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['ok' => false, 'error' => 'Too many failed login attempts. Try again later.'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
 }
 
 function password_policy_errors(string $password, string $username = ''): array {
@@ -264,6 +309,11 @@ function utf8_clean(string $s): string {
     return ($out !== false) ? $out : $s;
 }
 
+function strip_control_chars(string $s): string {
+    $out = preg_replace('/[\r\n\x00-\x1f\x7f]/', '', $s);
+    return $out !== null ? $out : $s;
+}
+
 function current_app_version(): ?string {
     $pkg_path = dirname(__DIR__) . '/frontend/package.json';
     $pkg_raw = @file_get_contents($pkg_path);
@@ -387,7 +437,7 @@ function auth_event_request_meta(): array {
     $remote_ip = trim((string)($_SERVER['REMOTE_ADDR'] ?? ''));
     $ip_address = $cf_ip !== '' ? $cf_ip : ($remote_ip !== '' ? $remote_ip : '');
     $user_agent = trim((string)($_SERVER['HTTP_USER_AGENT'] ?? ''));
-    $user_agent = $user_agent !== '' ? utf8_clean($user_agent) : null;
+    $user_agent = $user_agent !== '' ? strip_control_chars(utf8_clean($user_agent)) : null;
 
     $details = [];
     if ($cf_ip !== '') $details['ip_cf'] = $cf_ip;
@@ -409,7 +459,7 @@ function log_auth_event(string $event_type, ?int $user_id, ?string $username_sna
         $details = array_merge($meta['details'], $details);
         $details_json = $details ? json_encode($details, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : null;
 
-        $username_snapshot = utf8_clean((string)($username_snapshot ?? ''));
+        $username_snapshot = strip_control_chars(utf8_clean((string)($username_snapshot ?? '')));
         if (strlen($username_snapshot) > 190) {
             $username_snapshot = substr($username_snapshot, 0, 190);
         }
@@ -665,6 +715,172 @@ function split_authors_csv(?string $authors_csv): array {
         $names[] = $name;
     }
     return $names;
+}
+
+function normalize_author_metadata_name(?string $name): string {
+    $name = normalize_unicode_nfc(strip_invisible_format_chars(trim((string)$name)));
+    $name = preg_replace('/\s+/', ' ', $name);
+    return trim((string)$name);
+}
+
+function normalize_author_metadata_flag($value): ?int {
+    if (is_bool($value)) {
+        return $value ? 1 : 0;
+    }
+    if (is_int($value)) {
+        return $value ? 1 : 0;
+    }
+    if (is_float($value)) {
+        return ((int)$value) ? 1 : 0;
+    }
+    if (is_string($value)) {
+        $v = strtolower(trim($value));
+        if ($v === '') return null;
+        if (in_array($v, ['1', 'true', 'yes', 'y'], true)) return 1;
+        if (in_array($v, ['0', 'false', 'no', 'n'], true)) return 0;
+    }
+    return null;
+}
+
+function parse_authors_metadata_json(?string $authors_metadata_json): array {
+    $json = trim((string)$authors_metadata_json);
+    if ($json === '') return [];
+
+    $decoded = json_decode($json, true);
+    if (!is_array($decoded)) return [];
+
+    $entries = [];
+    foreach ($decoded as $entry) {
+        if (!is_array($entry)) continue;
+
+        $name = normalize_author_metadata_name($entry['name'] ?? null);
+        if ($name === '') continue;
+
+        $flag = normalize_author_metadata_flag($entry['is_hungarian'] ?? null);
+        $entries[] = [
+            'name' => $name,
+            'is_hungarian' => $flag,
+        ];
+    }
+
+    return $entries;
+}
+
+function build_authors_metadata_json(array $authors): string {
+    $payload = [];
+    foreach ($authors as $author) {
+        if (!is_array($author)) continue;
+
+        $name = normalize_author_metadata_name($author['name'] ?? null);
+        if ($name === '') continue;
+
+        $payload[] = [
+            'name' => $name,
+            'is_hungarian' => (bool)normalize_author_metadata_flag($author['is_hungarian'] ?? null),
+        ];
+    }
+
+    return json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '[]';
+}
+
+function resolve_import_author_entries(?string $authors_csv, ?string $authors_metadata_json = null): array {
+    $names = split_authors_csv($authors_csv);
+    $metadata = parse_authors_metadata_json($authors_metadata_json);
+
+    if (!$names) {
+        return $metadata;
+    }
+    if (!$metadata) {
+        return array_map(static function (string $name): array {
+            return ['name' => $name, 'is_hungarian' => null];
+        }, $names);
+    }
+
+    $entries = [];
+    $used = [];
+    $metadata_by_name = [];
+    foreach ($metadata as $index => $entry) {
+        $key = mb_strtolower(normalize_author_metadata_name($entry['name'] ?? ''), 'UTF-8');
+        if ($key === '') continue;
+        $metadata_by_name[$key][] = $index;
+    }
+
+    foreach ($names as $index => $name) {
+        $flag = null;
+        $matched = null;
+        $name_key = mb_strtolower(normalize_author_metadata_name($name), 'UTF-8');
+
+        if (isset($metadata[$index])) {
+            $meta_name = normalize_author_metadata_name($metadata[$index]['name'] ?? '');
+            if ($meta_name !== '' && mb_strtolower($meta_name, 'UTF-8') === $name_key) {
+                $matched = $index;
+            }
+        }
+
+        if ($matched === null && isset($metadata_by_name[$name_key])) {
+            foreach ($metadata_by_name[$name_key] as $candidate) {
+                if (!isset($used[$candidate])) {
+                    $matched = $candidate;
+                    break;
+                }
+            }
+        }
+
+        if ($matched !== null) {
+            $used[$matched] = true;
+            $flag = $metadata[$matched]['is_hungarian'] ?? null;
+        }
+
+        $entries[] = [
+            'name' => $name,
+            'is_hungarian' => $flag,
+        ];
+    }
+
+    return $entries;
+}
+
+function fetch_book_authors_metadata_map(PDO $pdo, array $book_ids): array {
+    $book_ids = array_values(array_filter(array_map('intval', $book_ids), static fn (int $id): bool => $id > 0));
+    if (!$book_ids) return [];
+
+    $placeholders = implode(',', array_fill(0, count($book_ids), '?'));
+    $st = $pdo->prepare("
+        SELECT
+            ba.book_id,
+            ba.author_ord,
+            a.author_id,
+            TRIM(
+                COALESCE(
+                    a.name,
+                    CASE
+                        WHEN a.is_hungarian = 1
+                            THEN CONCAT(COALESCE(a.last_name,''),' ',COALESCE(a.first_name,''))
+                        ELSE CONCAT(COALESCE(a.first_name,''),' ',COALESCE(a.last_name,''))
+                    END
+                )
+            ) AS name,
+            a.is_hungarian
+        FROM Books_Authors ba
+        JOIN Authors a ON a.author_id = ba.author_id
+        WHERE ba.book_id IN ($placeholders)
+        ORDER BY ba.book_id ASC, ba.author_ord ASC, a.author_id ASC
+    ");
+    $st->execute($book_ids);
+
+    $map = [];
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $book_id = (int)$row['book_id'];
+        $name = normalize_author_metadata_name($row['name'] ?? null);
+        if ($name === '') continue;
+
+        $map[$book_id][] = [
+            'name' => $name,
+            'is_hungarian' => (int)($row['is_hungarian'] ?? 0),
+        ];
+    }
+
+    return $map;
 }
 
 function infer_import_language_from_metadata(
@@ -1400,10 +1616,8 @@ function getAuthorId(PDO $pdo, ?string $author_name, ?int $force_is_hungarian = 
 /* --------------- Book↔Authors linking (uses new helper) ------------- */
 
 function attachAuthorsToBook(PDO $pdo, int $book_id, ?string $authors_csv, ?int $force_is_hungarian = null): void {
-    if (!$book_id || !$authors_csv) return;
-
-    $names = split_authors_csv($authors_csv);
-    if (!$names) return;
+    $entries = resolve_import_author_entries($authors_csv, null);
+    if (!$book_id || !$entries) return;
 
     $own_tx = false;
     if (!$pdo->inTransaction()) {
@@ -1412,20 +1626,73 @@ function attachAuthorsToBook(PDO $pdo, int $book_id, ?string $authors_csv, ?int 
     }
 
     try {
-        foreach ($names as $name) {
+        foreach ($entries as $index => $entry) {
+            $name = normalize_author_metadata_name($entry['name'] ?? null);
             // Guard again
             if ($name === '') continue;
 
-            $author_id = getAuthorId($pdo, $name, $force_is_hungarian);
+            $entry_flag = normalize_author_metadata_flag($entry['is_hungarian'] ?? null);
+            $effective_flag = $force_is_hungarian !== null ? (int)!!$force_is_hungarian : $entry_flag;
+            $author_id = getAuthorId($pdo, $name, $effective_flag);
             if (!$author_id) continue; // getAuthorId returns null on empty; be safe
+
+            if ($entry_flag !== null) {
+                $pdo->prepare("UPDATE Authors SET is_hungarian = ? WHERE author_id = ?")
+                    ->execute([$entry_flag, $author_id]);
+            }
 
             // Link if not already linked
             $link = $pdo->prepare("SELECT 1 FROM Books_Authors WHERE book_id = ? AND author_id = ? LIMIT 1");
             $link->execute([$book_id, $author_id]);
             if (!$link->fetchColumn()) {
-                $ins = $pdo->prepare("INSERT INTO Books_Authors (book_id, author_id) VALUES (?, ?)");
-                $ins->execute([$book_id, $author_id]);
+                $ins = $pdo->prepare("INSERT INTO Books_Authors (book_id, author_id, author_ord) VALUES (?, ?, ?)");
+                $ins->execute([$book_id, $author_id, $index + 1]);
+            } else {
+                $upd = $pdo->prepare("UPDATE Books_Authors SET author_ord = ? WHERE book_id = ? AND author_id = ?");
+                $upd->execute([$index + 1, $book_id, $author_id]);
             }
+        }
+        if ($own_tx) $pdo->commit();
+    } catch (Throwable $e) {
+        if ($own_tx && $pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+}
+
+function attachAuthorsMetadataToBook(PDO $pdo, int $book_id, ?string $authors_csv, ?string $authors_metadata_json = null): void {
+    $entries = resolve_import_author_entries($authors_csv, $authors_metadata_json);
+    if (!$entries) return;
+
+    attachAuthorsToBook(
+        $pdo,
+        $book_id,
+        implode('; ', array_map(static fn (array $entry): string => (string)$entry['name'], $entries)),
+        null
+    );
+
+    if ($authors_metadata_json === null || trim($authors_metadata_json) === '') {
+        return;
+    }
+
+    $own_tx = false;
+    if (!$pdo->inTransaction()) {
+        $pdo->beginTransaction();
+        $own_tx = true;
+    }
+
+    try {
+        foreach ($entries as $index => $entry) {
+            $name = normalize_author_metadata_name($entry['name'] ?? null);
+            $flag = normalize_author_metadata_flag($entry['is_hungarian'] ?? null);
+            if ($name === '' || $flag === null) continue;
+
+            $author_id = getAuthorId($pdo, $name, $flag);
+            if (!$author_id) continue;
+
+            $pdo->prepare("UPDATE Authors SET is_hungarian = ? WHERE author_id = ?")
+                ->execute([$flag, $author_id]);
+            $pdo->prepare("UPDATE Books_Authors SET author_ord = ? WHERE book_id = ? AND author_id = ?")
+                ->execute([$index + 1, $book_id, $author_id]);
         }
         if ($own_tx) $pdo->commit();
     } catch (Throwable $e) {
@@ -1523,6 +1790,35 @@ function make_thumb(string $src, string $dst, int $max_w = 200): bool {
     return $ok;
 }
 
+function validate_image_magic_bytes(string $path, string $mime): bool {
+    $fh = @fopen($path, 'rb');
+    if (!$fh) return false;
+    $header = fread($fh, 12);
+    fclose($fh);
+    if ($header === false) return false;
+
+    switch ($mime) {
+        case 'image/jpeg':
+            return strncmp($header, "\xFF\xD8\xFF", 3) === 0;
+        case 'image/png':
+            return strncmp($header, "\x89PNG", 4) === 0;
+        case 'image/webp':
+            return strncmp($header, 'RIFF', 4) === 0 && substr($header, 8, 4) === 'WEBP';
+    }
+    return false;
+}
+
+function ensure_uploads_htaccess(string $uploads_dir): void {
+    $htaccess = rtrim($uploads_dir, '/\\') . '/.htaccess';
+    if (is_file($htaccess)) return;
+    $content = "Options -ExecCGI -Indexes\n"
+        . "AddType text/plain .php .php3 .php4 .php5 .php7 .phtml .phar\n"
+        . "<FilesMatch \"\\.(php[0-9s]?|phtml|phar|cgi|pl|py|sh)$\">\n"
+        . "    Require all denied\n"
+        . "</FilesMatch>\n";
+    @file_put_contents($htaccess, $content);
+}
+
 function process_cover_upload(PDO $pdo, int $book_id, array $file, int $thumb_max_w = 200): array {
     if ($book_id <= 0) {
         throw new RuntimeException('Invalid book_id', 400);
@@ -1542,6 +1838,9 @@ function process_cover_upload(PDO $pdo, int $book_id, array $file, int $thumb_ma
     if (!isset($allowed[$mime])) {
         throw new RuntimeException('Unsupported file type', 415);
     }
+    if (!validate_image_magic_bytes($tmp_path, $mime)) {
+        throw new RuntimeException('File content does not match declared type', 415);
+    }
     if ((int)($file['size'] ?? 0) > 10*1024*1024) {
         throw new RuntimeException('File too large', 413);
     }
@@ -1550,6 +1849,7 @@ function process_cover_upload(PDO $pdo, int $book_id, array $file, int $thumb_ma
     if (!is_dir($base_dir) && !mkdir($base_dir, 0775, true)) {
         throw new RuntimeException('Unable to create upload directory');
     }
+    ensure_uploads_htaccess(__DIR__ . '/uploads');
 
     foreach (glob($base_dir . "/cover*.*") ?: [] as $old) { @unlink($old); }
     foreach (glob($base_dir . "/cover-thumb*.*") ?: [] as $old) { @unlink($old); }

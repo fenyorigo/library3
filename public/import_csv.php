@@ -71,6 +71,20 @@ function import_resolve_upload(array $file): array {
             throw new RuntimeException('Unable to open ZIP file');
         }
 
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $entry = $zip->getNameIndex($i);
+            if ($entry === false) continue;
+            $entry_norm = str_replace('\\', '/', $entry);
+            if (strpos($entry_norm, '..') !== false
+                || strpos($entry_norm, "\0") !== false
+                || strpos($entry_norm, '/') === 0
+                || preg_match('/^[A-Za-z]:/', $entry_norm)
+            ) {
+                $zip->close();
+                import_rrmdir($tmp_root);
+                throw new RuntimeException('ZIP entry contains unsafe path: ' . $entry);
+            }
+        }
         if (!$zip->extractTo($tmp_root)) {
             $zip->close();
             import_rrmdir($tmp_root);
@@ -120,6 +134,15 @@ function import_resolve_upload(array $file): array {
     ];
 }
 
+function import_safe_file_path(string $base_root, string $path): ?string {
+    $abs = realpath($base_root . '/' . $path);
+    if ($abs === false) return null;
+    $base = rtrim(str_replace('\\', '/', realpath($base_root) ?: $base_root), '/');
+    $abs_norm = rtrim(str_replace('\\', '/', $abs), '/');
+    if (strpos($abs_norm . '/', $base . '/') !== 0) return null;
+    return $abs;
+}
+
 function import_find_cover_source(string $extract_root, int $old_id, ?string $preferred_rel): ?string {
     $roots = [];
 
@@ -141,6 +164,7 @@ function import_find_cover_source(string $extract_root, int $old_id, ?string $pr
     }
 
     foreach ($roots as $path) {
+        if (import_safe_file_path($extract_root, ltrim(str_replace($extract_root, '', $path), '/\\')) === null) continue;
         if (is_file($path) && is_readable($path)) return $path;
     }
     return null;
@@ -167,6 +191,7 @@ function import_find_thumb_source(string $extract_root, int $old_id, ?string $pr
     }
 
     foreach ($roots as $path) {
+        if (import_safe_file_path($extract_root, ltrim(str_replace($extract_root, '', $path), '/\\')) === null) continue;
         if (is_file($path) && is_readable($path)) return $path;
     }
     return null;
@@ -298,7 +323,8 @@ try {
     $export_keys = [
         'id','title','subtitle','series','language','copy_count','year','isbn','lccn','notes','publisher','authors','subjects',
         'record_status',
-        'loaned_to','loaned_date','bookcase','shelf','cover_image','cover_thumb','cover_filename','copies_json'
+        'loaned_to','loaned_date','bookcase','shelf','cover_image','cover_thumb','cover_filename','copies_json',
+        'authors_json','authors_metadata_json'
     ];
     $legacy_keys = ['title','subtitle','year_published','authors'];
 
@@ -402,6 +428,7 @@ try {
         $cover_image_rel = null;
         $cover_thumb_rel = null;
         $language_field_present = false;
+        $authors_metadata_json = null;
         if ($mode === 'legacy') {
             $subtitle = N($data['subtitle'] ?? null);
             $year = $normalize_year($data['year_published'] ?? null);
@@ -441,6 +468,7 @@ try {
             $notes = N($data['notes'] ?? null);
             $publisher_id = getPublisherId($pdo, N($data['publisher'] ?? null));
             $authors_csv = N($data['authors'] ?? null);
+            $authors_metadata_json = N($data['authors_metadata_json'] ?? ($data['authors_json'] ?? null));
             $subjects_csv = N($data['subjects'] ?? null);
             $loaned_to = N($data['loaned_to'] ?? null);
             $loaned_date = N($data['loaned_date'] ?? null);
@@ -678,8 +706,8 @@ try {
                 $push_warning($warnings, $total, 'Restore kept record deleted because ebook paths are no longer valid and no print copy exists.');
             }
 
-            if ($authors_csv) {
-                attachAuthors($book_id, $authors_csv);
+            if ($authors_csv || $authors_metadata_json) {
+                attachAuthorsMetadataToBook($pdo, $book_id, $authors_csv, $authors_metadata_json);
             }
 
             if ($subjects_csv) {

@@ -1,0 +1,5 @@
+Options -ExecCGI -Indexes
+AddType text/plain .php .php3 .php4 .php5 .php7 .phtml .phar
+<FilesMatch "\.(php[0-9s]?|phtml|phar|cgi|pl|py|sh)$">
+    Require all denied
+</FilesMatch>

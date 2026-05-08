@@ -24,5 +24,6 @@ json_out([
       'force_password_change' => $force,
     ],
     'preferences' => $prefs,
+    'csrf_token' => csrf_token_ensure(),
   ],
 ]);

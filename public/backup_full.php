@@ -250,7 +250,8 @@ foreach ($books as $r) {
 foreach (array_keys($cover_paths) as $rel) {
     $rel_clean = ltrim(str_replace('\\', '/', $rel), '/');
     if (strpos($rel_clean, 'uploads/') !== 0) continue;
-    $abs = __DIR__ . '/' . $rel_clean;
+    $abs = realpath(__DIR__ . '/' . $rel_clean);
+    if ($abs === false || strpos($abs, $uploads_dir . '/') !== 0) continue;
     add_if_exists($zip, $abs, $rel_clean);
 }
 
@@ -279,7 +280,8 @@ $sha($csv_bs_path,         'data/Books_Subjects.csv');
 foreach (array_keys($cover_paths) as $rel) {
     $rel_clean = ltrim(str_replace('\\', '/', $rel), '/');
     if (strpos($rel_clean, 'uploads/') !== 0) continue;
-    $abs = __DIR__ . '/' . $rel_clean;
+    $abs = realpath(__DIR__ . '/' . $rel_clean);
+    if ($abs === false || strpos($abs, $uploads_dir . '/') !== 0) continue;
     $sha($abs, $rel_clean);
 }
 

@@ -91,6 +91,19 @@ Notes:
 - Path normalization is handled during import.
 - Filename parsing supports hyphen, en dash, and em dash separators.
 
+## Security
+
+v3.1.0 includes a full security hardening pass (backport from v2.7.0):
+
+- HTTP security headers on every response (X-Frame-Options, CSP, X-Content-Type-Options, X-XSS-Protection)
+- CSRF token system for all authenticated POST endpoints
+- Login rate limiting (10 failed attempts per 15 minutes per IP)
+- Image upload magic byte validation
+- PHP execution blocked in `/uploads/` via `.htaccess`
+- ZIP path traversal protection on import and backup
+- Session regeneration on admin password reset
+- Log injection filtering on auth event fields
+
 ## Status
 
 Current state:
@@ -100,6 +113,7 @@ Current state:
 - soft delete and restore are implemented
 - NeoFinder conversion tooling is included
 - import-time language inference is implemented
+- security hardening applied (v3.1.0)
 
-Current application version: **3.0.0-dev**  
+Current application version: **3.1.0**  
 Current schema version: **3.0.0**

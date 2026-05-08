@@ -5,6 +5,7 @@ declare(strict_types=1);
 start_secure_session();
 
 function require_login(): array {
+  require_csrf();
   if (empty($_SESSION['uid'])) {
     json_fail('Not authenticated', 401);
   }

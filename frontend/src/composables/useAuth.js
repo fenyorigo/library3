@@ -1,5 +1,5 @@
 import { reactive, ref } from "vue";
-import { login, logout, me } from "../api";
+import { login, logout, me, setCsrfToken } from "../api";
 
 export function useAuth(options = {}) {
   const user = ref(null);
@@ -12,6 +12,7 @@ export function useAuth(options = {}) {
   const loginError = ref("");
 
   const handleUnauthorized = () => {
+    setCsrfToken('');
     user.value = null;
     showLoginModal.value = true;
     loginError.value = "";
@@ -26,6 +27,7 @@ export function useAuth(options = {}) {
     try {
       const profile = await me();
       const payload = profile.data || {};
+      if (payload.csrf_token) setCsrfToken(payload.csrf_token);
       user.value = payload.user ?? profile;
       showLoginModal.value = false;
       if (typeof options.onAuthenticated === "function") {

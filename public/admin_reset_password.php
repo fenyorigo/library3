@@ -46,6 +46,8 @@ try {
     $upd = $pdo->prepare('UPDATE Users SET password_hash = ?, force_password_change = 1 WHERE user_id = ?');
     $upd->execute([$hash, $user_id]);
 
+    session_regenerate_id(true);
+
     log_auth_event('admin_reset_password', $user_id, (string)$row['username'], [
         'actor_user_id' => (int)$me['uid'],
         'actor_username' => (string)$me['username'],

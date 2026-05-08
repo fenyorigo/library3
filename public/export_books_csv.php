@@ -227,7 +227,9 @@ try {
     foreach ($params as $k => $v) { $st->bindValue(':' . $k, $v, PDO::PARAM_STR); }
     $st->execute();
     $rows = $st->fetchAll(PDO::FETCH_ASSOC);
-    $copy_map = fetch_book_copies_map($pdo, array_map(static fn (array $row): int => (int)$row['id'], $rows));
+    $book_ids = array_map(static fn (array $row): int => (int)$row['id'], $rows);
+    $copy_map = fetch_book_copies_map($pdo, $book_ids);
+    $authors_metadata_map = fetch_book_authors_metadata_map($pdo, $book_ids);
 
 } catch (Throwable $e) {
     echo "ERROR: " . $e->getMessage();
@@ -248,13 +250,14 @@ if ($out === false) {
 $bytes_written = 0;
 $bytes = fputcsv($out, [
     'ID', 'Title', 'Subtitle', 'Series', 'Language', 'Copy Count', 'Year', 'ISBN', 'LCCN', 'Notes',
-    'Publisher', 'Authors', 'Subjects', 'Loaned To', 'Loaned Date', 'Record Status',
+    'Publisher', 'Authors', 'Authors Metadata JSON', 'Subjects', 'Loaned To', 'Loaned Date', 'Record Status',
     'Bookcase', 'Shelf', 'Cover Image', 'Cover Filename', 'Copies JSON'
 ], ',', '"', "\\");
 $bytes_written += is_int($bytes) ? $bytes : 0;
 
 foreach ($rows as $r) {
     $copies = $copy_map[(int)$r['id']] ?? [];
+    $authors_metadata_json = build_authors_metadata_json($authors_metadata_map[(int)$r['id']] ?? []);
     $cover_fn = $r['cover_image'] ? basename($r['cover_image']) : '';
 
     $row = [
@@ -270,6 +273,7 @@ foreach ($rows as $r) {
         $r['notes'],
         $r['publisher'],
         $r['authors'],
+        $authors_metadata_json,
         $r['subjects'],
         $r['loaned_to'],
         $r['loaned_date'],
