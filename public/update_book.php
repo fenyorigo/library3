@@ -188,7 +188,11 @@ try {
 
     if ($copies_key_present && bookcopies_table_exists($pdo)) {
         $saved_copies = replace_book_copies($pdo, $id, $d['copies']);
-        sync_book_copy_derived_fields($pdo, $id, $saved_copies);
+        $sync = sync_book_copy_derived_fields($pdo, $id, $saved_copies);
+        if ($placement_key_present && ($params[':placement_id'] ?? null) === null) {
+            $pdo->prepare('UPDATE Books SET placement_id = NULL WHERE book_id = ?')->execute([$id]);
+            $sync['placement_id'] = null;
+        }
     } elseif ($placement_key_present || array_key_exists('copy_count', $d)) {
         $physical_location = null;
         if (array_key_exists('placement', $d) && is_array($d['placement'])) {

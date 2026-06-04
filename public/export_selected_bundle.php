@@ -88,10 +88,17 @@ $sortable = [
     'publisher' => 'p.name',
     'year'      => 'b.year_published',
     'authors'   => "CASE WHEN authors IS NULL THEN 1 ELSE 0 END, authors",
-    'bookcase'  => 'pl.bookcase_no, pl.shelf_no',
+    'bookcase'  => 'pl.bookcase_no',
     'notes'     => 'b.notes',
 ];
 $order_by = $sortable[$sort_in] ?? $sortable['title'];
+$order_sql = $order_by . ' ' . $dir_sql . ', b.book_id ASC';
+if ($sort_in === 'bookcase') {
+    $order_sql = 'CASE WHEN pl.placement_id IS NULL THEN 1 ELSE 0 END ASC, '
+        . 'pl.bookcase_no ' . $dir_sql . ', '
+        . 'pl.shelf_no ' . $dir_sql . ', '
+        . 'b.book_id ASC';
+}
 
 $where_chunks = [];
 $params = [];
@@ -184,7 +191,7 @@ FROM Books b
 LEFT JOIN Publishers p ON p.publisher_id = b.publisher_id
 LEFT JOIN Placement  pl ON pl.placement_id = b.placement_id
 $where_sql
-ORDER BY $order_by $dir_sql, b.book_id ASC
+ORDER BY $order_sql
 ";
 
 $st = $pdo->prepare($sql);

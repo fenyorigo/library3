@@ -115,5 +115,5 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.1.1**  
+Current application version: **3.1.2**  
 Current schema version: **3.0.0**

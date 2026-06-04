@@ -60,7 +60,7 @@ $sortable = [
  'copy_count'=> 'b.copy_count',
  'authors'   => "CASE WHEN authors IS NULL THEN 1 ELSE 0 END, authors",
  'authors_hu'=> "CASE WHEN authors_hu_flag IS NULL THEN 1 ELSE 0 END, authors_hu_flag",
- 'bookcase'  => 'pl.bookcase_no, pl.shelf_no',
+ 'bookcase'  => 'pl.bookcase_no',
   'cover'     => '(b.cover_image IS NOT NULL AND b.cover_image <> "")',
   'status'    => "CASE WHEN (b.loaned_to IS NOT NULL AND b.loaned_to <> '') OR b.loaned_date IS NOT NULL THEN 1 ELSE 0 END",
   'isbn'      => 'b.isbn',
@@ -70,6 +70,13 @@ $sortable = [
   'notes'     => 'b.notes',
 ];
 $order_by = $sortable[$sort_in] ?? $sortable['id'];
+$order_sql = $order_by . ' ' . $dir_sql . ', b.book_id DESC';
+if ($sort_in === 'bookcase') {
+  $order_sql = 'CASE WHEN pl.placement_id IS NULL THEN 1 ELSE 0 END ASC, '
+    . 'pl.bookcase_no ' . $dir_sql . ', '
+    . 'pl.shelf_no ' . $dir_sql . ', '
+    . 'b.book_id DESC';
+}
 
 /**
  * Build WHERE from tokenized q (AND across tokens; each token matches multiple fields)
@@ -278,7 +285,7 @@ FROM Books b
 LEFT JOIN Publishers p ON p.publisher_id = b.publisher_id
 LEFT JOIN Placement  pl ON pl.placement_id = b.placement_id
 $where_sql
-ORDER BY $order_by $dir_sql, b.book_id DESC
+ORDER BY $order_sql
 LIMIT $safe_limit OFFSET $safe_offset
 ";
 try {

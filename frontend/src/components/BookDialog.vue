@@ -746,12 +746,17 @@ const save = () => {
   const physicalFromPlacement = payload.placement.bookcase_no && payload.placement.shelf_no
     ? `#${payload.placement.bookcase_no}/${payload.placement.shelf_no}`
     : "";
+  const normalizePrintPhysicalLocation = (value) => {
+    const text = (value || "").trim();
+    if (!text) return null;
+    return /^#?\s*\d+\s*\/\s*\d+$/.test(text) ? null : text;
+  };
   payload.copies = (form.value.copies || []).map((copy) => ({
     copy_id: copy.copy_id ?? null,
     format: copy.format || "print",
     quantity: Math.max(1, Number(copy.quantity || 1)),
     physical_location: copy.format === "print"
-      ? (physicalFromPlacement || (copy.physical_location || "").trim() || null)
+      ? (physicalFromPlacement || normalizePrintPhysicalLocation(copy.physical_location))
       : ((copy.physical_location || "").trim() || null),
     file_path: copy.format === "print" ? null : ((copy.file_path || "").trim() || null),
     notes: (copy.notes || "").trim() || null,
