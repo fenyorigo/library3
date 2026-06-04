@@ -231,6 +231,7 @@ $zip->addFile($csv_bs_path,         'data/Books_Subjects.csv');
 // cover images (only existing ones)
 $uploads_dir = realpath(__DIR__ . '/uploads') ?: (__DIR__ . '/uploads');
 $cover_paths = [];
+$cover_paths['uploads/.htaccess'] = true;
 $cover_paths['uploads/default-cover.jpg'] = true;
 $cover_paths['uploads/default_cover.jpg'] = true;
 foreach ($books as $r) {

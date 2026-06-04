@@ -290,6 +290,7 @@ foreach ($rows as $r) {
     if ($ct !== '' && strpos($ct, 'uploads/') === 0) $cover_paths[$ct] = true;
 }
 // Include default cover for portability (both known filenames).
+$cover_paths['uploads/.htaccess'] = true;
 $cover_paths['uploads/default-cover.jpg'] = true;
 $cover_paths['uploads/default_cover.jpg'] = true;
 
@@ -321,6 +322,7 @@ Timestamp key: {$timestamp}
 Includes:
 - data/books.csv (filtered by current search)
 - uploads/... cover files referenced by exported rows
+- uploads/.htaccess (if present)
 - uploads/default-cover.jpg or uploads/default_cover.jpg (if present)
 TXT;
 $zip->addFromString('README.txt', $readme);
