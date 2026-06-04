@@ -197,6 +197,18 @@ function import_find_thumb_source(string $extract_root, int $old_id, ?string $pr
     return null;
 }
 
+function remap_import_cover_path(?string $rel_path, int $old_id, int $new_id): ?string {
+    $rel_path = N($rel_path);
+    if ($rel_path === null) return null;
+    $old_prefix = 'uploads/' . $old_id . '/';
+    $new_prefix = 'uploads/' . $new_id . '/';
+    $norm = ltrim(str_replace('\\', '/', $rel_path), '/');
+    if (strpos($norm, $old_prefix) === 0) {
+        return $new_prefix . substr($norm, strlen($old_prefix));
+    }
+    return $norm;
+}
+
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
 if ($method === 'GET') {
@@ -525,8 +537,15 @@ try {
             $cover_thumb_rel = N($data['cover_thumb'] ?? null);
             if ($cover_thumb_rel === null) {
                 $cover_filename = N($data['cover_filename'] ?? null);
-                if ($cover_filename !== null && $id_in !== null) {
-                    $cover_thumb_rel = 'uploads/' . $id_in . '/' . basename($cover_filename);
+                $cover_source = $cover_image_rel ?? ($cover_filename !== null && $id_in !== null
+                    ? 'uploads/' . $id_in . '/' . basename($cover_filename)
+                    : null);
+                if ($cover_source !== null) {
+                    $cover_info = pathinfo($cover_source);
+                    $cover_dir = (string)($cover_info['dirname'] ?? '');
+                    $cover_ext = strtolower((string)($cover_info['extension'] ?? 'jpg'));
+                    $cover_thumb_rel = ($cover_dir !== '' ? $cover_dir . '/' : '')
+                        . 'cover-thumb.' . ($cover_ext !== '' ? $cover_ext : 'jpg');
                 }
             }
         }
@@ -621,8 +640,8 @@ try {
                         $isbn,
                         $lccn,
                         $notes,
-                        null,
-                        null,
+                        $cover_image_rel,
+                        $cover_thumb_rel,
                         $placement_id,
                         $record_status,
                         $loaned_to,
@@ -652,8 +671,8 @@ try {
                         $isbn,
                         $lccn,
                         $notes,
-                        null,
-                        null,
+                        ($id_in !== null && $cover_image_rel !== null) ? remap_import_cover_path($cover_image_rel, $id_in, $target_book_id) : $cover_image_rel,
+                        ($id_in !== null && $cover_thumb_rel !== null) ? remap_import_cover_path($cover_thumb_rel, $id_in, $target_book_id) : $cover_thumb_rel,
                         $placement_id,
                         $record_status,
                         $loaned_to,
@@ -679,8 +698,8 @@ try {
                         $isbn,
                         $lccn,
                         $notes,
-                        null,
-                        null,
+                        $cover_image_rel,
+                        $cover_thumb_rel,
                         $placement_id,
                         $record_status,
                         $loaned_to,

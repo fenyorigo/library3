@@ -93,7 +93,7 @@ Notes:
 
 ## Security
 
-v3.1.0 includes a full security hardening pass (backport from v2.7.0):
+v3.1.1 includes a full security hardening pass (backport from v2.7.0):
 
 - HTTP security headers on every response (X-Frame-Options, CSP, X-Content-Type-Options, X-XSS-Protection)
 - CSRF token system for all authenticated POST endpoints
@@ -113,7 +113,7 @@ Current state:
 - soft delete and restore are implemented
 - NeoFinder conversion tooling is included
 - import-time language inference is implemented
-- security hardening applied (v3.1.0)
+- security hardening applied (v3.1.1)
 
-Current application version: **3.1.0**  
+Current application version: **3.1.1**  
 Current schema version: **3.0.0**

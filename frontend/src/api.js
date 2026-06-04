@@ -15,7 +15,7 @@ export function setCsrfToken(token) {
   _csrfToken = token || '';
 }
 
-function csrfHeader() {
+export function csrfHeader() {
   return _csrfToken ? { 'X-CSRF-Token': _csrfToken } : {};
 }
 

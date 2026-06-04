@@ -111,7 +111,7 @@
 </template>
 
 <script lang="ts">
-import { apiUrl } from "../api";
+import { apiUrl, csrfHeader } from "../api";
 
 type CsvImportError = {
   line: number;
@@ -173,6 +173,7 @@ export default {
 
         const res = await fetch(apiUrl("import_csv.php"), {
           method: 'POST',
+          headers: csrfHeader(),
           credentials: 'same-origin',
           body: fd,
         });
