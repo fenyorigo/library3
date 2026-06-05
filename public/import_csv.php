@@ -832,6 +832,16 @@ try {
         }
     }
 
+    if (!$dry_run && $id_mode === 'new_catalog') {
+        try {
+            $next_auto_increment = (int)$pdo->query('SELECT COALESCE(MAX(book_id), 0) + 1 FROM Books')->fetchColumn();
+            if ($next_auto_increment < 1) $next_auto_increment = 1;
+            $pdo->exec('ALTER TABLE Books AUTO_INCREMENT = ' . $next_auto_increment);
+        } catch (Throwable $e) {
+            $push_warning($warnings, 0, 'Could not reset Books AUTO_INCREMENT after new-catalog import: ' . $e->getMessage());
+        }
+    }
+
     if (is_string($extract_root)) {
         import_rrmdir($extract_root);
     }

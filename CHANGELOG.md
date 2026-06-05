@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.1.3 - 2026-06-05
+
+- Reset the `Books` auto-increment counter after new-catalog imports so newly added books continue from the remapped ID range.
+
 ## 3.1.2 - 2026-06-04
 
 - Fixed placement sorting in the book list and CSV/bundle exports.
