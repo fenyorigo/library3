@@ -305,6 +305,7 @@ $cover_book_ids = [];
 foreach (array_keys($cover_paths) as $rel) {
     $rel_clean = ltrim(str_replace('\\', '/', $rel), '/');
     if (strpos($rel_clean, 'uploads/') !== 0) continue;
+    if (archive_should_skip_path($rel_clean)) continue;
     $abs = __DIR__ . '/' . $rel_clean;
     if (!is_file($abs) || !is_readable($abs)) continue;
     $zip->addFile($abs, $rel_clean);

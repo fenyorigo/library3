@@ -41,6 +41,17 @@ function json_in(): array {
     return is_array($d) ? $d : [];
 }
 
+function archive_should_skip_path(string $path): bool {
+    $parts = preg_split('#[\\\\/]+#', str_replace('\\', '/', $path)) ?: [];
+    foreach ($parts as $part) {
+        if ($part === '' || $part === '.' || $part === '..') continue;
+        if ($part === '.DS_Store' || $part === '.AppleDouble' || $part === '.LSOverride') return true;
+        if (strncmp($part, '._', 2) === 0) return true;
+        if (preg_match('/^Icon\r?$/', $part)) return true;
+    }
+    return false;
+}
+
 function start_secure_session(): void {
     if (session_status() === PHP_SESSION_ACTIVE) return;
 

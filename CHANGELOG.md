@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.4 - 2026-06-05
+
+- Show a busy overlay while catalog purge is running after the `DELETE` confirmation.
+- Exclude macOS metadata files such as `.DS_Store`, `._*`, `.AppleDouble`, `.LSOverride`, and `Icon\r` from full and selected export ZIP archives.
+
 ## 3.1.3 - 2026-06-05
 
 - Reset the `Books` auto-increment counter after new-catalog imports so newly added books continue from the remapped ID range.

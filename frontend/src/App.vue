@@ -91,7 +91,7 @@
         <button v-if="isAdmin" @click="openOrphanMaintenance">Orphan maintenance</button>
         <button v-if="isAdmin" @click="openDuplicateCandidates">Duplicate candidates</button>
         <button v-if="isAdmin" @click="openAuthLogs">Logs</button>
-        <button v-if="isAdmin" class="danger" @click="onPurgeCatalog">Purge catalog</button>
+        <button v-if="isAdmin" class="danger" :disabled="purgeBusy" @click="onPurgeCatalog">Purge catalog</button>
       </div>
     </section>
 
@@ -185,6 +185,13 @@
       <div class="busy-card">
         <div class="spinner" aria-hidden="true"></div>
         <div>{{ backupBusyMessage || "Preparing backup..." }}</div>
+      </div>
+    </div>
+
+    <div v-if="purgeBusy" class="busy-overlay" aria-live="polite">
+      <div class="busy-card">
+        <div class="spinner" aria-hidden="true"></div>
+        <div>Purging catalog...</div>
       </div>
     </div>
 
@@ -291,6 +298,7 @@ const rebuildThumbsErrors = ref(0);
 const rebuildThumbsErrorList = ref([]);
 const backupBusy = ref(false);
 const backupBusyMessage = ref("");
+const purgeBusy = ref(false);
 const preferences = ref({
   logo_url: null,
   bg_color: null,
@@ -836,6 +844,7 @@ const onPurgeCatalog = async () => {
   }
 
   try {
+    purgeBusy.value = true;
     const res = await purgeCatalog("DELETE");
     const data = res?.data || {};
     const deletedRows = data.deleted_rows || {};
@@ -857,6 +866,8 @@ const onPurgeCatalog = async () => {
       return;
     }
     alert(err && err.message ? err.message : "Catalog purge failed.");
+  } finally {
+    purgeBusy.value = false;
   }
 };
 
