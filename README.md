@@ -50,6 +50,8 @@ Supported import styles:
 - v2-style CSV exports for print-only catalogs
 - v3-style CSV files for mixed print and ebook records
 
+Selected exports use the currently active search, filter, and sort order. When importing as a new catalog with reassigned IDs, that exported row order also determines the new ID sequence.
+
 During import, the system can infer language heuristically from title and subtitle metadata. The current heuristic is tuned mainly for:
 
 - Hungarian
@@ -115,5 +117,5 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.1.4**  
+Current application version: **3.1.5**  
 Current schema version: **3.0.0**

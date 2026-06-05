@@ -10,6 +10,8 @@ export function apiUrl(path) {
 }
 
 let _csrfToken = '';
+let _assetCacheVersion = Date.now().toString(36);
+let _assetCacheCounter = 0;
 
 export function setCsrfToken(token) {
   _csrfToken = token || '';
@@ -17,6 +19,12 @@ export function setCsrfToken(token) {
 
 export function csrfHeader() {
   return _csrfToken ? { 'X-CSRF-Token': _csrfToken } : {};
+}
+
+export function bumpAssetCacheVersion() {
+  _assetCacheCounter += 1;
+  _assetCacheVersion = `${Date.now().toString(36)}-${_assetCacheCounter}`;
+  return _assetCacheVersion;
 }
 
 async function apiFetch(url, options = {}) {
@@ -49,7 +57,9 @@ export function assetUrl(path) {
   const raw = String(path).trim();
   if (/^https?:\/\//i.test(raw)) return raw;
   const cleaned = raw.replace(/^\/+/, '');
-  return new URL(cleaned, API_BASE).toString();
+  const url = new URL(cleaned, API_BASE);
+  url.searchParams.set('v', _assetCacheVersion);
+  return url.toString();
 }
 
 /* -------------------- LIST -------------------- */

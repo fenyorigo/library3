@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.5 - 2026-06-05
+
+- Added CSRF headers to cover upload and cover deletion requests in the book dialog.
+- Added cache-busting for local cover asset URLs after import, purge, and cover changes to avoid stale thumbnails after restores.
+
 ## 3.1.4 - 2026-06-05
 
 - Show a busy overlay while catalog purge is running after the `DELETE` confirmation.

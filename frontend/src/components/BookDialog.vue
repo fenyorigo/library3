@@ -310,7 +310,7 @@
 
 <script setup lang="js">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { apiUrl, assetUrl } from "../api";
+import { apiUrl, assetUrl, bumpAssetCacheVersion, csrfHeader } from "../api";
 
 const LANGUAGE_OPTIONS = [
   { value: "unknown", label: "Unknown" },
@@ -832,6 +832,7 @@ const onUpload = async (e, type) => {
 
     const res = await fetch(apiUrl("upload_image.php"), {
       method: "POST",
+      headers: csrfHeader(),
       body: fd,
       credentials: "same-origin",
     });
@@ -840,6 +841,7 @@ const onUpload = async (e, type) => {
     const payload = data && data.data ? data.data : {};
 
     const path = payload.path;
+    bumpAssetCacheVersion();
     coverImageOverride.value = path || null;
     if (!coverThumbOverride.value) coverThumbOverride.value = path || null;
 
@@ -861,6 +863,7 @@ const onDelete = async (type) => {
 
   const res = await fetch(apiUrl("delete_image.php"), {
     method: "POST",
+    headers: csrfHeader(),
     body: fd,
     credentials: "same-origin",
   });
@@ -870,6 +873,7 @@ const onDelete = async (type) => {
     return;
   }
 
+  bumpAssetCacheVersion();
   coverImageOverride.value = null;
   coverThumbOverride.value = null;
 

@@ -137,6 +137,7 @@
       @save="onSaveDialog"
       @create="onCreateDialog"
       @duplicate="duplicateFrom"
+      @updated="onBookImageUpdated"
     />
 
     <CsvImportModal
@@ -260,6 +261,7 @@ import {
   updateBook,
   updateUserPreferences,
   assetUrl,
+  bumpAssetCacheVersion,
   apiUrl,
 } from "./api";
 import { useAuth } from "./composables/useAuth";
@@ -858,6 +860,7 @@ const onPurgeCatalog = async () => {
     alert(
       `Catalog purge completed.\nRemoved bibliographic records: ${removedBookRecords}\nRemoved item instances (print + ebook): ${removedItemInstances}\nRemoved cover files: ${removedCoverFiles}\nRemoved thumbnail files: ${removedThumbFiles}\nRemoved other upload files: ${removedOtherFiles}\nRemoved upload files total: ${removedFiles}\nRemoved upload dirs: ${removedDirs}`
     );
+    bumpAssetCacheVersion();
     page.value = 1;
     await reload();
   } catch (err) {
@@ -935,6 +938,7 @@ const onCreateDialog = async (payload, coverFile = null) => {
   if (!ensureAdmin()) return;
   try {
     const res = await addBook(payload, coverFile);
+    if (coverFile) bumpAssetCacheVersion();
     alert(res.message || "Book created.");
     onCloseDialog();
     await reload();
@@ -948,10 +952,16 @@ const onCreateDialog = async (payload, coverFile = null) => {
 };
 
 const onCsvImported = async (payload) => {
+  bumpAssetCacheVersion();
   await reload();
   if (!payload?.id_conflicts?.length) {
     showCsvImport.value = false;
   }
+};
+
+const onBookImageUpdated = async () => {
+  bumpAssetCacheVersion();
+  await reload();
 };
 
 const describeCopyForDelete = (copy, index) => {
