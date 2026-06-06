@@ -181,9 +181,14 @@
               </div>
             </template>
             <template v-else>
-              <div v-for="(author, idx) in form.authors_detail" :key="`${author.name}-${idx}`" class="author-alias-row">
+              <div v-for="(author, idx) in authorAliasRows" :key="`${author.name}-${idx}`" class="author-alias-row">
                 <span class="author-name">{{ author.name }}</span>
-                <input v-model.trim="author.author_alias" class="author-alias-input" placeholder="Alias / pseudonym" />
+                <input
+                  :value="author.author_alias"
+                  class="author-alias-input"
+                  placeholder="Alias / pseudonym"
+                  @input="updateAuthorAlias(idx, $event.target.value)"
+                />
               </div>
             </template>
           </div>
@@ -534,7 +539,14 @@ const allowAuthorCreate = computed(() => (form.value.authors || "").trim().lengt
 const safeId = computed(() => props.book?.id || props.book?.book_id || null);
 const bookCopies = computed(() => Array.isArray(props.book?.copies) ? props.book.copies : []);
 const authorDisplayRows = computed(() => authorsDetailFromBook(props.book || {}));
-const authorAliasRows = computed(() => readonly.value ? authorDisplayRows.value : (form.value.authors_detail || []));
+const authorAliasRows = computed(() => {
+  if (readonly.value) {
+    return authorDisplayRows.value.filter((author) => normalizeAuthorAlias(author.author_alias));
+  }
+  const current = Array.isArray(form.value.authors_detail) ? form.value.authors_detail : [];
+  if (current.length) return current;
+  return syncAuthorDetailsFromText(form.value.authors, [], form.value.authors_is_hungarian);
+});
 const authorsHuLabel = computed(() => {
   if (props.book?.authors_hu_flag === null || props.book?.authors_hu_flag === undefined) return "Mixed";
   return props.book.authors_hu_flag ? "Yes" : "No";
@@ -693,6 +705,12 @@ const syncFormAuthorDetails = () => {
     form.value.authors_detail || [],
     form.value.authors_is_hungarian
   );
+};
+
+const updateAuthorAlias = (idx, value) => {
+  syncFormAuthorDetails();
+  if (!Array.isArray(form.value.authors_detail) || !form.value.authors_detail[idx]) return;
+  form.value.authors_detail[idx].author_alias = normalizeAuthorAlias(value);
 };
 
 const onAuthorsInput = () => {
