@@ -116,6 +116,10 @@ try {
     $row['has_cover'] = !empty($row['cover_image']);
     $row['record_status'] = $record_status;
     $row['language'] = normalize_book_language($row['language'] ?? 'unknown');
+    $authors_metadata_map = fetch_book_authors_metadata_map($pdo, [$id]);
+    $authors_detail = $authors_metadata_map[$id] ?? [];
+    $row['authors_detail'] = $authors_detail;
+    $row['authors_metadata_json'] = build_authors_metadata_json($authors_detail);
     $row['copies'] = fetch_book_copies($pdo, $id);
     $row['copy_count'] = total_book_copy_quantity($row['copies'], (int)($row['copy_count'] ?? 1));
     $row['format_summary'] = summarize_book_formats($row['copies']);

@@ -110,6 +110,7 @@ try {
 
     // Authors CSV (optional)
     $authors_csv = N($d['authors'] ?? null);
+    $authors_metadata_json = N($d['authors_metadata_json'] ?? ($d['authors_json'] ?? null));
     $authors_is_hu = array_key_exists('authors_is_hungarian', $d)
         ? (int)!!$d['authors_is_hungarian']
         : null;
@@ -164,8 +165,12 @@ try {
     }
 
     // Link authors if provided (this must NOT start its own TX if one is already open)
-    if ($authors_csv) {
-        attachAuthors($book_id, $authors_csv, $authors_is_hu);
+    if ($authors_csv || $authors_metadata_json) {
+        if ($authors_metadata_json !== null) {
+            attachAuthorsMetadataToBook($pdo, $book_id, $authors_csv, $authors_metadata_json);
+        } else {
+            attachAuthors($book_id, $authors_csv, $authors_is_hu);
+        }
     }
 
     // Link subjects if provided

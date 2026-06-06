@@ -38,6 +38,14 @@ try {
         $has_hu = false;
     }
 
+    $has_alias = books_authors_has_author_alias($pdo);
+    $books_status_filter = books_table_has_record_status($pdo)
+        ? " AND COALESCE(b.record_status, 'active') <> 'deleted'"
+        : "";
+    $alias_select = $has_alias
+        ? "(SELECT GROUP_CONCAT(DISTINCT ba.author_alias ORDER BY ba.author_alias SEPARATOR '; ') FROM Books_Authors ba JOIN Books b ON b.book_id = ba.book_id WHERE ba.author_id = Authors.author_id{$books_status_filter} AND ba.author_alias IS NOT NULL AND ba.author_alias <> '') AS author_aliases"
+        : "NULL AS author_aliases";
+
     if ($has_hu) {
         $display_expr = "COALESCE(NULLIF(TRIM(name),''),
                                  NULLIF(TRIM(CASE WHEN is_hungarian = 1
@@ -55,15 +63,27 @@ try {
     $where = '';
     $params = [];
     if ($q !== '') {
+        $alias_where = $has_alias
+            ? " OR\n          EXISTS (SELECT 1 FROM Books_Authors ba JOIN Books b ON b.book_id = ba.book_id WHERE ba.author_id = Authors.author_id{$books_status_filter} AND ba.author_alias LIKE ? %s)"
+            : "";
         $where = "WHERE (
           name LIKE ? %s OR
           first_name LIKE ? %s OR
           last_name LIKE ? %s OR
-          sort_name LIKE ? %s
+          sort_name LIKE ? %s{$alias_where}
         )";
         $like = "%$q%";
-        $params = [$like, $like, $like, $like];
+        $params = $has_alias
+            ? [$like, $like, $like, $like, $like]
+            : [$like, $like, $like, $like];
     }
+
+
+    $where_collations = static function (string $collation) use ($has_alias): array {
+        $args = [$collation, $collation, $collation, $collation];
+        if ($has_alias) $args[] = $collation;
+        return $args;
+    };
 
     $sort_map = [
         'id' => 'author_id',
@@ -75,32 +95,32 @@ try {
     if (!isset($sort_map[$sort])) $sort = 'name';
     $sort_is_text = in_array($sort, ['name', 'first_name', 'last_name', 'sort_name'], true);
 
-    $count_sql = "SELECT COUNT(*) FROM Authors " . ($where ? sprintf($where, '', '', '', '') : '');
+    $count_sql = "SELECT COUNT(*) FROM Authors " . ($where ? sprintf($where, ...$where_collations('')) : '');
     $list_sql = "SELECT author_id, $display_expr AS name,
-                        first_name, last_name, sort_name, $hu_select
-                 FROM Authors " . ($where ? sprintf($where, '', '', '', '') : '') . "
+                        first_name, last_name, sort_name, $hu_select, $alias_select
+                 FROM Authors " . ($where ? sprintf($where, ...$where_collations('')) : '') . "
                  ORDER BY {$sort_map[$sort]} $dir
                  LIMIT ? OFFSET ?";
 
     try {
         if ($where) {
-            $count_sql = sprintf("SELECT COUNT(*) FROM Authors $where", "COLLATE utf8mb4_0900_ai_ci", "COLLATE utf8mb4_0900_ai_ci", "COLLATE utf8mb4_0900_ai_ci", "COLLATE utf8mb4_0900_ai_ci");
+            $count_sql = sprintf("SELECT COUNT(*) FROM Authors $where", ...$where_collations("COLLATE utf8mb4_0900_ai_ci"));
             $order_expr = $sort_is_text
                 ? ($sort_map[$sort] . " COLLATE utf8mb4_0900_ai_ci")
                 : $sort_map[$sort];
             $list_sql = sprintf("SELECT author_id, $display_expr AS name,
-                                        first_name, last_name, sort_name, $hu_select
+                                        first_name, last_name, sort_name, $hu_select, $alias_select
                                  FROM Authors $where
                                  ORDER BY $order_expr $dir
                                  LIMIT ? OFFSET ?",
-                "COLLATE utf8mb4_0900_ai_ci", "COLLATE utf8mb4_0900_ai_ci", "COLLATE utf8mb4_0900_ai_ci", "COLLATE utf8mb4_0900_ai_ci");
+                ...$where_collations("COLLATE utf8mb4_0900_ai_ci"));
         } else {
             $count_sql = "SELECT COUNT(*) FROM Authors";
             $order_expr = $sort_is_text
                 ? ($sort_map[$sort] . " COLLATE utf8mb4_0900_ai_ci")
                 : $sort_map[$sort];
             $list_sql = "SELECT author_id, $display_expr AS name,
-                                first_name, last_name, sort_name, $hu_select
+                                first_name, last_name, sort_name, $hu_select, $alias_select
                          FROM Authors
                          ORDER BY $order_expr $dir
                          LIMIT ? OFFSET ?";
@@ -118,17 +138,17 @@ try {
     } catch (Throwable $e) {
         // Fallback if collation not supported
         if ($where) {
-            $count_sql = sprintf("SELECT COUNT(*) FROM Authors $where", "", "", "", "");
+            $count_sql = sprintf("SELECT COUNT(*) FROM Authors $where", ...$where_collations(""));
             $list_sql = sprintf("SELECT author_id, $display_expr AS name,
-                                        first_name, last_name, sort_name, $hu_select
+                                        first_name, last_name, sort_name, $hu_select, $alias_select
                                  FROM Authors $where
                                  ORDER BY {$sort_map[$sort]} $dir
                                  LIMIT ? OFFSET ?",
-                "", "", "", "");
+                ...$where_collations(""));
         } else {
             $count_sql = "SELECT COUNT(*) FROM Authors";
             $list_sql = "SELECT author_id, $display_expr AS name,
-                                first_name, last_name, sort_name, $hu_select
+                                first_name, last_name, sort_name, $hu_select, $alias_select
                          FROM Authors
                          ORDER BY {$sort_map[$sort]} $dir
                          LIMIT ? OFFSET ?";

@@ -159,9 +159,14 @@ try {
 
     if ($author_key_present) {
         $authors_csv = N($d['authors'] ?? null);
+        $authors_metadata_json = N($d['authors_metadata_json'] ?? ($d['authors_json'] ?? null));
         $pdo->prepare('DELETE FROM Books_Authors WHERE book_id = ?')->execute([$id]);
-        if ($authors_csv) {
-            attachAuthorsToBook($pdo, $id, $authors_csv, $authors_is_hu);
+        if ($authors_csv || $authors_metadata_json) {
+            if ($authors_metadata_json !== null) {
+                attachAuthorsMetadataToBook($pdo, $id, $authors_csv, $authors_metadata_json);
+            } else {
+                attachAuthorsToBook($pdo, $id, $authors_csv, $authors_is_hu);
+            }
         }
     }
 

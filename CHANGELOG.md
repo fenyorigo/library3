@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.1 - 2026-06-06
+
+- Display relation-level author aliases in book detail and edit views.
+- Allow editing per-book author aliases from the book edit modal.
+- Show author aliases in the Authors modal as usage metadata, excluding aliases attached only to deleted books.
+
 ## 3.2.0 - 2026-06-06
 
 - Added relation-level ebook author aliases via `Books_Authors.author_alias` and the `{aka ...}` filename metadata convention.

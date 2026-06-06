@@ -62,6 +62,7 @@
                 <th :aria-sort="ariaSort('sort_name')">
                   <button class="th-btn" @click="toggleSort('sort_name')">Sort name<span class="chev">{{ chevron('sort_name') }}</span></button>
                 </th>
+                <th>Aliases</th>
                 <th class="w-actions">Actions</th>
               </tr>
             </thead>
@@ -84,6 +85,7 @@
                   <input v-if="editingAuthorId === a.author_id" v-model.trim="editDraft.sort_name" />
                   <span v-else>{{ a.sort_name || "—" }}</span>
                 </td>
+                <td class="aliases-cell">{{ a.author_aliases || "—" }}</td>
                 <td class="actions">
                   <button v-if="editingAuthorId === a.author_id" @click="saveEdit(a.author_id)">Save</button>
                   <button v-if="editingAuthorId === a.author_id" class="ghost" @click="cancelEdit">Cancel</button>
@@ -279,6 +281,7 @@ export default {
 .table th, .table td { border-bottom: 1px solid var(--line); padding: .45rem .55rem; text-align: left; }
 .th-btn { display:inline-flex; align-items:center; gap:.35rem; font: inherit; background:none; border:none; color: inherit; cursor:pointer; padding:0; }
 .chev { opacity:.6; font-size:.9em; }
+.aliases-cell { max-width: 18rem; overflow-wrap: anywhere; }
 .actions { display:flex; gap:.4rem; flex-wrap: wrap; }
 .w-actions { width: 13rem; }
 .w-id { width: 6rem; }

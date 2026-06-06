@@ -129,7 +129,13 @@
 
           <!-- Authors + HU -->
           <label>Authors</label>
-          <div v-if="readonly" class="ro">{{ book.authors || '—' }}</div>
+          <div v-if="readonly" class="ro author-lines">
+            <div v-for="author in authorDisplayRows" :key="author.name">
+              <span>{{ author.name }}</span>
+              <span v-if="author.author_alias" class="alias-text">aka {{ author.author_alias }}</span>
+            </div>
+            <div v-if="!authorDisplayRows.length">—</div>
+          </div>
           <div v-else class="combo" @keydown.esc="closeAuthorList">
             <input
               v-model.trim="form.authors"
@@ -161,6 +167,24 @@
             <template v-else>
               <input type="checkbox" v-model="form.authors_is_hungarian" @change="onAuthorsHuChange" />
               <span>Hungarian name order</span>
+            </template>
+          </div>
+
+          <div class="row-break"></div>
+
+          <label v-if="authorAliasRows.length">Author aliases</label>
+          <div v-if="authorAliasRows.length" class="span-3 author-aliases">
+            <template v-if="readonly">
+              <div v-for="author in authorAliasRows" :key="author.name" class="author-alias-row readonly-alias">
+                <span class="author-name">{{ author.name }}</span>
+                <span class="alias-value">{{ author.author_alias || '—' }}</span>
+              </div>
+            </template>
+            <template v-else>
+              <div v-for="(author, idx) in form.authors_detail" :key="`${author.name}-${idx}`" class="author-alias-row">
+                <span class="author-name">{{ author.name }}</span>
+                <input v-model.trim="author.author_alias" class="author-alias-input" placeholder="Alias / pseudonym" />
+              </div>
             </template>
           </div>
 
@@ -371,6 +395,68 @@ const initCopies = (b = {}) => {
   return [defaultPrintCopy(b)];
 };
 
+const normalizeAuthorName = (value) => String(value || "").trim().replace(/\s+/g, " ");
+
+const splitAuthorsText = (value) => String(value || "")
+  .split(";")
+  .map(normalizeAuthorName)
+  .filter(Boolean);
+
+const normalizeAuthorAlias = (value) => {
+  const alias = String(value || "").trim().replace(/\s+/g, " ");
+  return alias || "";
+};
+
+const authorsDetailFromBook = (b = {}) => {
+  if (Array.isArray(b.authors_detail) && b.authors_detail.length) {
+    return b.authors_detail
+      .map((author) => ({
+        name: normalizeAuthorName(author.name),
+        is_hungarian: author.is_hungarian === true || author.is_hungarian === 1,
+        author_alias: normalizeAuthorAlias(author.author_alias || author.alias),
+      }))
+      .filter((author) => author.name);
+  }
+  return splitAuthorsText(Array.isArray(b.authors) ? b.authors.join("; ") : (b.authors || ""))
+    .map((name) => ({
+      name,
+      is_hungarian: b.authors_hu_flag === 1,
+      author_alias: "",
+    }));
+};
+
+const syncAuthorDetailsFromText = (authorsText, current = [], isHungarian = false) => {
+  const existing = new Map();
+  current.forEach((author) => {
+    const name = normalizeAuthorName(author.name);
+    if (name) existing.set(name.toLocaleLowerCase(), author);
+  });
+  return splitAuthorsText(authorsText).map((name) => {
+    const old = existing.get(name.toLocaleLowerCase()) || {};
+    return {
+      name,
+      is_hungarian: old.is_hungarian === true || old.is_hungarian === 1 || !!isHungarian,
+      author_alias: normalizeAuthorAlias(old.author_alias || old.alias),
+    };
+  });
+};
+
+const buildAuthorsMetadataJson = (authors = []) => JSON.stringify(
+  authors
+    .map((author) => {
+      const name = normalizeAuthorName(author.name);
+      if (!name) return null;
+      const entry = {
+        name,
+        is_hungarian: author.is_hungarian === true || author.is_hungarian === 1,
+      };
+      const alias = normalizeAuthorAlias(author.author_alias || author.alias);
+      if (alias) entry.author_alias = alias;
+      return entry;
+    })
+    .filter(Boolean)
+);
+
 const initForm = (b = {}, mode = "view") => {
   if (mode === "create") {
     return {
@@ -384,6 +470,7 @@ const initForm = (b = {}, mode = "view") => {
       lccn: b.lccn || "",
       notes: b.notes || "",
       authors: Array.isArray(b.authors) ? b.authors.join("; ") : (b.authors || ""),
+      authors_detail: authorsDetailFromBook(b),
       authors_is_hungarian: b.authors_hu_flag === 1,
       subjects: b.subjects || "",
       publisher: b.publisher || "",
@@ -406,6 +493,7 @@ const initForm = (b = {}, mode = "view") => {
     lccn: b.lccn || "",
     notes: b.notes || "",
     authors: Array.isArray(b.authors) ? b.authors.join("; ") : (b.authors || ""),
+    authors_detail: authorsDetailFromBook(b),
     authors_is_hungarian: b.authors_hu_flag === 1,
     subjects: b.subjects || "",
     publisher: b.publisher || "",
@@ -445,6 +533,8 @@ const readonly = computed(() => props.mode === "view" || !props.canManage);
 const allowAuthorCreate = computed(() => (form.value.authors || "").trim().length >= 2);
 const safeId = computed(() => props.book?.id || props.book?.book_id || null);
 const bookCopies = computed(() => Array.isArray(props.book?.copies) ? props.book.copies : []);
+const authorDisplayRows = computed(() => authorsDetailFromBook(props.book || {}));
+const authorAliasRows = computed(() => readonly.value ? authorDisplayRows.value : (form.value.authors_detail || []));
 const authorsHuLabel = computed(() => {
   if (props.book?.authors_hu_flag === null || props.book?.authors_hu_flag === undefined) return "Mixed";
   return props.book.authors_hu_flag ? "Yes" : "No";
@@ -597,7 +687,16 @@ const chooseFreeText = () => {
   showPubList.value = false;
 };
 
+const syncFormAuthorDetails = () => {
+  form.value.authors_detail = syncAuthorDetailsFromText(
+    form.value.authors,
+    form.value.authors_detail || [],
+    form.value.authors_is_hungarian
+  );
+};
+
 const onAuthorsInput = () => {
+  syncFormAuthorDetails();
   clearTimeout(authorTimer);
   const raw = (form.value.authors || "").trim();
   const lastToken = raw.split(";").pop().trim();
@@ -620,6 +719,10 @@ const onAuthorsInput = () => {
 
 const onAuthorsHuChange = () => {
   authorsHuTouched.value = true;
+  form.value.authors_detail = (form.value.authors_detail || []).map((author) => ({
+    ...author,
+    is_hungarian: !!form.value.authors_is_hungarian,
+  }));
 };
 
 const onAuthorsFocus = () => {
@@ -645,6 +748,7 @@ const chooseAuthor = (opt) => {
   }
   parts.push(opt.name);
   form.value.authors = parts.join("; ");
+  syncFormAuthorDetails();
   authorOptions.value = [];
   showAuthorList.value = false;
 };
@@ -782,7 +886,9 @@ const save = () => {
 
   if (props.mode === "create") {
     if (form.value.authors && form.value.authors.trim()) {
+      syncFormAuthorDetails();
       payload.authors = form.value.authors.trim();
+      payload.authors_metadata_json = buildAuthorsMetadataJson(form.value.authors_detail);
       payload.authors_is_hungarian = !!form.value.authors_is_hungarian;
     }
     if (coverFile.value) {
@@ -790,7 +896,9 @@ const save = () => {
     }
     emit("create", payload, coverFile.value);
   } else {
+    syncFormAuthorDetails();
     payload.authors = (form.value.authors || "").trim();
+    payload.authors_metadata_json = buildAuthorsMetadataJson(form.value.authors_detail);
     if (authorsHuTouched.value || props.book.authors_hu_flag !== null) {
       payload.authors_is_hungarian = !!form.value.authors_is_hungarian;
     }
@@ -1011,6 +1119,12 @@ const onDelete = async (type) => {
   padding: 0.45rem 0.55rem;
 }
 
+.author-lines { display: grid; gap: .2rem; }
+.alias-text { margin-left: .45rem; opacity: .72; font-size: .9em; }
+.author-aliases { display: grid; gap: .35rem; }
+.author-alias-row { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1fr); gap: .55rem; align-items: center; }
+.author-name { overflow-wrap: anywhere; }
+.alias-value { opacity: .82; overflow-wrap: anywhere; }
 .ro { padding: .2rem 0; }
 .prewrap { white-space: pre-wrap; }
 

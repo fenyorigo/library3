@@ -23,7 +23,16 @@
 
           <!-- Metadata -->
           <div class="meta-grid">
-            <div><strong>Authors</strong><div>{{ book.authors || "—" }}</div></div>
+            <div>
+              <strong>Authors</strong>
+              <div v-if="authorRows.length" class="author-lines">
+                <div v-for="author in authorRows" :key="author.name">
+                  <span>{{ author.name }}</span>
+                  <span v-if="author.author_alias" class="alias-text">aka {{ author.author_alias }}</span>
+                </div>
+              </div>
+              <div v-else>—</div>
+            </div>
             <div><strong>Publisher</strong><div>{{ book.publisher || "—" }}</div></div>
             <div><strong>Language</strong><div>{{ book.language || "unknown" }}</div></div>
             <div><strong>Record</strong><div>{{ book.record_status || "active" }}</div></div>
@@ -94,6 +103,26 @@ const props = defineProps({
 
 const { book } = toRefs(props);
 
+const normalizeAuthorName = (value) => String(value || "").trim().replace(/\s+/g, " ");
+const normalizeAuthorAlias = (value) => String(value || "").trim().replace(/\s+/g, " ");
+
+const authorRows = computed(() => {
+  const b = book.value || {};
+  if (Array.isArray(b.authors_detail) && b.authors_detail.length) {
+    return b.authors_detail
+      .map((author) => ({
+        name: normalizeAuthorName(author.name),
+        author_alias: normalizeAuthorAlias(author.author_alias || author.alias),
+      }))
+      .filter((author) => author.name);
+  }
+  return String(b.authors || "")
+    .split(";")
+    .map(normalizeAuthorName)
+    .filter(Boolean)
+    .map((name) => ({ name, author_alias: "" }));
+});
+
 const coverSrc = computed(() => {
   const fallback = "uploads/default-cover.jpg";
   const raw = (book.value && (book.value.cover_thumb || book.value.cover_image)) || fallback;
@@ -130,6 +159,8 @@ onBeforeUnmount(() => {
 .meta-grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:.75rem 1rem; }
 .meta-grid .span-2 { grid-column: 1 / span 2; }
 .meta-grid .notes { white-space: pre-wrap; }
+.author-lines { display: grid; gap: .2rem; }
+.alias-text { margin-left: .45rem; opacity: .72; font-size: .9em; }
 .small { font-size: .9em; }
 .copies-table { width: 100%; border-collapse: collapse; margin-top: .35rem; }
 .copies-table th, .copies-table td { border-bottom: 1px solid var(--btn-border); padding: .3rem .4rem; text-align: left; vertical-align: top; }
