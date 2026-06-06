@@ -52,6 +52,8 @@ Supported import styles:
 
 Selected exports use the currently active search, filter, and sort order. When importing as a new catalog with reassigned IDs, that exported row order also determines the new ID sequence.
 
+Migration note for v3.1.0 schema: existing databases need `ALTER TABLE Books_Authors ADD COLUMN author_alias varchar(255) DEFAULT NULL AFTER author_ord;` to store relation-level ebook pseudonyms from `{aka ...}` filename metadata.
+
 During import, the system can infer language heuristically from title and subtitle metadata. The current heuristic is tuned mainly for:
 
 - Hungarian
@@ -117,5 +119,5 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.1.5**  
-Current schema version: **3.0.0**
+Current application version: **3.2.0**  
+Current schema version: **3.1.0**

@@ -9,7 +9,7 @@ declare(strict_types=1);
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
 
-const SCHEMA_VERSION = '3.0.0';
+const SCHEMA_VERSION = '3.1.0';
 
 /* --------------------------- Error helpers --------------------------- */
 
@@ -39,6 +39,47 @@ function json_in(): array {
     $raw = file_get_contents('php://input');
     $d = $raw ? json_decode($raw, true) : null;
     return is_array($d) ? $d : [];
+}
+
+function table_column_exists(PDO $pdo, string $table, string $column): bool {
+    static $cache = [];
+    $key = spl_object_id($pdo) . ':' . $table . '.' . $column;
+    if (array_key_exists($key, $cache)) return $cache[$key];
+
+    try {
+        $driver = strtolower((string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME));
+        if ($driver === 'sqlite') {
+            $safe_table = str_replace("'", "''", $table);
+            $rows = $pdo->query("PRAGMA table_info('{$safe_table}')")->fetchAll(PDO::FETCH_ASSOC);
+            $cache[$key] = false;
+            foreach ($rows as $row) {
+                if (($row['name'] ?? '') === $column) {
+                    $cache[$key] = true;
+                    break;
+                }
+            }
+            return $cache[$key];
+        }
+
+        $st = $pdo->prepare("
+            SELECT 1
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = ?
+              AND COLUMN_NAME = ?
+            LIMIT 1
+        ");
+        $st->execute([$table, $column]);
+        $cache[$key] = (bool)$st->fetchColumn();
+    } catch (Throwable $e) {
+        $cache[$key] = false;
+    }
+
+    return $cache[$key];
+}
+
+function books_authors_has_author_alias(PDO $pdo): bool {
+    return table_column_exists($pdo, 'Books_Authors', 'author_alias');
 }
 
 function archive_should_skip_path(string $path): bool {
@@ -731,7 +772,18 @@ function split_authors_csv(?string $authors_csv): array {
 function normalize_author_metadata_name(?string $name): string {
     $name = normalize_unicode_nfc(strip_invisible_format_chars(trim((string)$name)));
     $name = preg_replace('/\s+/', ' ', $name);
-    return trim((string)$name);
+    $name = trim((string)$name);
+    if (preg_match('/^@(.+)@$/u', $name, $m)) {
+        $name = trim((string)$m[1]);
+    }
+    return $name;
+}
+
+function normalize_author_alias(?string $alias): ?string {
+    $alias = normalize_unicode_nfc(strip_invisible_format_chars(trim((string)$alias)));
+    $alias = preg_replace('/\s+/', ' ', $alias);
+    $alias = trim((string)$alias);
+    return $alias !== '' ? $alias : null;
 }
 
 function normalize_author_metadata_flag($value): ?int {
@@ -768,9 +820,11 @@ function parse_authors_metadata_json(?string $authors_metadata_json): array {
         if ($name === '') continue;
 
         $flag = normalize_author_metadata_flag($entry['is_hungarian'] ?? null);
+        $alias = normalize_author_alias($entry['author_alias'] ?? ($entry['alias'] ?? null));
         $entries[] = [
             'name' => $name,
             'is_hungarian' => $flag,
+            'author_alias' => $alias,
         ];
     }
 
@@ -785,10 +839,15 @@ function build_authors_metadata_json(array $authors): string {
         $name = normalize_author_metadata_name($author['name'] ?? null);
         if ($name === '') continue;
 
-        $payload[] = [
+        $entry = [
             'name' => $name,
             'is_hungarian' => (bool)normalize_author_metadata_flag($author['is_hungarian'] ?? null),
         ];
+        $alias = normalize_author_alias($author['author_alias'] ?? ($author['alias'] ?? null));
+        if ($alias !== null) {
+            $entry['author_alias'] = $alias;
+        }
+        $payload[] = $entry;
     }
 
     return json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '[]';
@@ -803,7 +862,7 @@ function resolve_import_author_entries(?string $authors_csv, ?string $authors_me
     }
     if (!$metadata) {
         return array_map(static function (string $name): array {
-            return ['name' => $name, 'is_hungarian' => null];
+            return ['name' => normalize_author_metadata_name($name), 'is_hungarian' => null, 'author_alias' => null];
         }, $names);
     }
 
@@ -837,14 +896,17 @@ function resolve_import_author_entries(?string $authors_csv, ?string $authors_me
             }
         }
 
+        $alias = null;
         if ($matched !== null) {
             $used[$matched] = true;
             $flag = $metadata[$matched]['is_hungarian'] ?? null;
+            $alias = normalize_author_alias($metadata[$matched]['author_alias'] ?? ($metadata[$matched]['alias'] ?? null));
         }
 
         $entries[] = [
-            'name' => $name,
+            'name' => normalize_author_metadata_name($name),
             'is_hungarian' => $flag,
+            'author_alias' => $alias,
         ];
     }
 
@@ -856,6 +918,7 @@ function fetch_book_authors_metadata_map(PDO $pdo, array $book_ids): array {
     if (!$book_ids) return [];
 
     $placeholders = implode(',', array_fill(0, count($book_ids), '?'));
+    $alias_select = books_authors_has_author_alias($pdo) ? 'ba.author_alias' : 'NULL';
     $st = $pdo->prepare("
         SELECT
             ba.book_id,
@@ -871,7 +934,8 @@ function fetch_book_authors_metadata_map(PDO $pdo, array $book_ids): array {
                     END
                 )
             ) AS name,
-            a.is_hungarian
+            a.is_hungarian,
+            {$alias_select} AS author_alias
         FROM Books_Authors ba
         JOIN Authors a ON a.author_id = ba.author_id
         WHERE ba.book_id IN ($placeholders)
@@ -885,10 +949,15 @@ function fetch_book_authors_metadata_map(PDO $pdo, array $book_ids): array {
         $name = normalize_author_metadata_name($row['name'] ?? null);
         if ($name === '') continue;
 
-        $map[$book_id][] = [
+        $entry = [
             'name' => $name,
             'is_hungarian' => (int)($row['is_hungarian'] ?? 0),
         ];
+        $alias = normalize_author_alias($row['author_alias'] ?? null);
+        if ($alias !== null) {
+            $entry['author_alias'] = $alias;
+        }
+        $map[$book_id][] = $entry;
     }
 
     return $map;
@@ -1446,6 +1515,15 @@ function getPublisherId(PDO $pdo, ?string $publisher_name): ?int {
 function parse_author_free_text(string $s, bool $is_hungarian = false): array {
     $s = trim(preg_replace('/\s+/', ' ', $s));
     if ($s === '') return ['', '', ''];
+    if (preg_match('/^@(.+)@$/u', $s, $m)) {
+        $inner = trim((string)$m[1]);
+        return ['', $inner, $inner];
+    }
+    if (strpos($s, '|') !== false) {
+        [$last, $first] = array_map('trim', explode('|', $s, 2));
+        $sort = trim($last . ' ' . $first);
+        return [$first, $last, $sort];
+    }
 
     if (strpos($s, ',') !== false) {
         // "Last, First …"
@@ -1626,8 +1704,7 @@ function getAuthorId(PDO $pdo, ?string $author_name, ?int $force_is_hungarian = 
 }
 /* --------------- Book↔Authors linking (uses new helper) ------------- */
 
-function attachAuthorsToBook(PDO $pdo, int $book_id, ?string $authors_csv, ?int $force_is_hungarian = null): void {
-    $entries = resolve_import_author_entries($authors_csv, null);
+function attachAuthorEntriesToBook(PDO $pdo, int $book_id, array $entries, ?int $force_is_hungarian = null): void {
     if (!$book_id || !$entries) return;
 
     $own_tx = false;
@@ -1637,30 +1714,40 @@ function attachAuthorsToBook(PDO $pdo, int $book_id, ?string $authors_csv, ?int 
     }
 
     try {
+        $has_alias = books_authors_has_author_alias($pdo);
         foreach ($entries as $index => $entry) {
             $name = normalize_author_metadata_name($entry['name'] ?? null);
-            // Guard again
             if ($name === '') continue;
 
             $entry_flag = normalize_author_metadata_flag($entry['is_hungarian'] ?? null);
             $effective_flag = $force_is_hungarian !== null ? (int)!!$force_is_hungarian : $entry_flag;
             $author_id = getAuthorId($pdo, $name, $effective_flag);
-            if (!$author_id) continue; // getAuthorId returns null on empty; be safe
+            if (!$author_id) continue;
 
             if ($entry_flag !== null) {
                 $pdo->prepare("UPDATE Authors SET is_hungarian = ? WHERE author_id = ?")
                     ->execute([$entry_flag, $author_id]);
             }
 
-            // Link if not already linked
+            $alias = normalize_author_alias($entry['author_alias'] ?? ($entry['alias'] ?? null));
             $link = $pdo->prepare("SELECT 1 FROM Books_Authors WHERE book_id = ? AND author_id = ? LIMIT 1");
             $link->execute([$book_id, $author_id]);
             if (!$link->fetchColumn()) {
-                $ins = $pdo->prepare("INSERT INTO Books_Authors (book_id, author_id, author_ord) VALUES (?, ?, ?)");
-                $ins->execute([$book_id, $author_id, $index + 1]);
+                if ($has_alias) {
+                    $ins = $pdo->prepare("INSERT INTO Books_Authors (book_id, author_id, author_ord, author_alias) VALUES (?, ?, ?, ?)");
+                    $ins->execute([$book_id, $author_id, $index + 1, $alias]);
+                } else {
+                    $ins = $pdo->prepare("INSERT INTO Books_Authors (book_id, author_id, author_ord) VALUES (?, ?, ?)");
+                    $ins->execute([$book_id, $author_id, $index + 1]);
+                }
             } else {
-                $upd = $pdo->prepare("UPDATE Books_Authors SET author_ord = ? WHERE book_id = ? AND author_id = ?");
-                $upd->execute([$index + 1, $book_id, $author_id]);
+                if ($has_alias) {
+                    $upd = $pdo->prepare("UPDATE Books_Authors SET author_ord = ?, author_alias = ? WHERE book_id = ? AND author_id = ?");
+                    $upd->execute([$index + 1, $alias, $book_id, $author_id]);
+                } else {
+                    $upd = $pdo->prepare("UPDATE Books_Authors SET author_ord = ? WHERE book_id = ? AND author_id = ?");
+                    $upd->execute([$index + 1, $book_id, $author_id]);
+                }
             }
         }
         if ($own_tx) $pdo->commit();
@@ -1670,46 +1757,14 @@ function attachAuthorsToBook(PDO $pdo, int $book_id, ?string $authors_csv, ?int 
     }
 }
 
+function attachAuthorsToBook(PDO $pdo, int $book_id, ?string $authors_csv, ?int $force_is_hungarian = null): void {
+    $entries = resolve_import_author_entries($authors_csv, null);
+    attachAuthorEntriesToBook($pdo, $book_id, $entries, $force_is_hungarian);
+}
+
 function attachAuthorsMetadataToBook(PDO $pdo, int $book_id, ?string $authors_csv, ?string $authors_metadata_json = null): void {
     $entries = resolve_import_author_entries($authors_csv, $authors_metadata_json);
-    if (!$entries) return;
-
-    attachAuthorsToBook(
-        $pdo,
-        $book_id,
-        implode('; ', array_map(static fn (array $entry): string => (string)$entry['name'], $entries)),
-        null
-    );
-
-    if ($authors_metadata_json === null || trim($authors_metadata_json) === '') {
-        return;
-    }
-
-    $own_tx = false;
-    if (!$pdo->inTransaction()) {
-        $pdo->beginTransaction();
-        $own_tx = true;
-    }
-
-    try {
-        foreach ($entries as $index => $entry) {
-            $name = normalize_author_metadata_name($entry['name'] ?? null);
-            $flag = normalize_author_metadata_flag($entry['is_hungarian'] ?? null);
-            if ($name === '' || $flag === null) continue;
-
-            $author_id = getAuthorId($pdo, $name, $flag);
-            if (!$author_id) continue;
-
-            $pdo->prepare("UPDATE Authors SET is_hungarian = ? WHERE author_id = ?")
-                ->execute([$flag, $author_id]);
-            $pdo->prepare("UPDATE Books_Authors SET author_ord = ? WHERE book_id = ? AND author_id = ?")
-                ->execute([$index + 1, $book_id, $author_id]);
-        }
-        if ($own_tx) $pdo->commit();
-    } catch (Throwable $e) {
-        if ($own_tx && $pdo->inTransaction()) $pdo->rollBack();
-        throw $e;
-    }
+    attachAuthorEntriesToBook($pdo, $book_id, $entries, null);
 }
 
 /* ---------------------- Convenience shims --------------------------- */

@@ -91,7 +91,10 @@ try {
     $book_copies = bookcopies_table_exists($pdo)
         ? $pdo->query("SELECT copy_id, book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at FROM BookCopies ORDER BY book_id, copy_id")->fetchAll(PDO::FETCH_ASSOC)
         : [];
-    $books_authors = $pdo->query("SELECT book_id, author_id, author_ord FROM Books_Authors ORDER BY book_id, author_ord")->fetchAll(PDO::FETCH_ASSOC);
+    $books_authors_cols = books_authors_has_author_alias($pdo)
+        ? 'book_id, author_id, author_ord, author_alias'
+        : 'book_id, author_id, author_ord, NULL AS author_alias';
+    $books_authors = $pdo->query("SELECT {$books_authors_cols} FROM Books_Authors ORDER BY book_id, author_ord")->fetchAll(PDO::FETCH_ASSOC);
     $books_subjects = $pdo->query("SELECT book_id, subject_id FROM Books_Subjects ORDER BY book_id, subject_id")->fetchAll(PDO::FETCH_ASSOC);
 } catch (Throwable $e) {
     json_fail('Query failed: ' . $e->getMessage(), 500);
@@ -140,7 +143,7 @@ $csv_authors_path     = write_csv($authors,      ['author_id','first_name','last
 $csv_publishers_path  = write_csv($publishers,   ['publisher_id','name']);
 $csv_subjects_path    = write_csv($subjects,     ['subject_id','name']);
 $csv_bookcopies_path  = write_csv($book_copies,  ['copy_id','book_id','format','quantity','physical_location','file_path','notes','created_at','updated_at']);
-$csv_ba_path          = write_csv($books_authors, ['book_id','author_id','author_ord']);
+$csv_ba_path          = write_csv($books_authors, ['book_id','author_id','author_ord','author_alias']);
 $csv_bs_path          = write_csv($books_subjects,['book_id','subject_id']);
 
 // ---------- zip build ----------
@@ -209,7 +212,7 @@ Includes:
 - books.csv  (flat export; last column is cover_file)
 - BookCopies.csv
 - authors.csv, publishers.csv, subjects.csv
-- Books_Authors.csv (with author_ord), Books_Subjects.csv
+- Books_Authors.csv (with author_ord and author_alias), Books_Subjects.csv
 - uploads/default-cover.jpg (if present)
 - uploads/<id>/cover.* and cover-thumb.* files referenced by exported rows
 

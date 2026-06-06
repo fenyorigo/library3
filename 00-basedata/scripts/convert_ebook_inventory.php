@@ -39,12 +39,48 @@ function ebook_parse_authors(string $author_part): array {
     foreach ($raw_parts as $raw_author) {
         $name = ebook_norm($raw_author);
         if ($name === '') continue;
+        if (preg_match('/^@(.+)@$/u', $name, $m)) {
+            $name = ebook_norm((string)$m[1]);
+        }
+        if ($name === '') continue;
         $authors[] = [
             'name' => $name,
             'is_hungarian' => strpos($name, ',') === false,
+            'author_alias' => null,
         ];
     }
     return $authors;
+}
+
+function ebook_extract_metadata_blocks(string $value): array {
+    $blocks = [];
+    $clean = preg_replace_callback('/\s*\{([^{}]+)\}\s*/u', static function (array $m) use (&$blocks): string {
+        $blocks[] = ebook_norm($m[1] ?? '');
+        return ' ';
+    }, $value);
+    return [ebook_norm((string)$clean), array_values(array_filter($blocks, static fn (string $v): bool => $v !== ''))];
+}
+
+function ebook_apply_metadata_blocks(array $blocks, array &$authors): array {
+    $series = [];
+    $aliases = [];
+    foreach ($blocks as $block) {
+        if (preg_match('/^aka\s+(.+)$/iu', $block, $m)) {
+            $alias = ebook_norm((string)$m[1]);
+            if ($alias !== '') $aliases[] = $alias;
+        } else {
+            $series[] = $block;
+        }
+    }
+
+    if ($aliases && isset($authors[0])) {
+        $authors[0]['author_alias'] = implode('; ', $aliases);
+    }
+
+    return [
+        'series' => $series ? implode('; ', $series) : '',
+        'author_alias' => $aliases ? implode('; ', $aliases) : '',
+    ];
 }
 
 function ebook_parse_row(string $name, string $path, string $kind): array {
@@ -67,6 +103,9 @@ function ebook_parse_row(string $name, string $path, string $kind): array {
     $title = ebook_norm((string)array_shift($parts));
     $subtitle = $parts ? ebook_norm(implode(' - ', $parts)) : '';
     $authors = ebook_parse_authors((string)$author_part);
+    [$title, $title_blocks] = ebook_extract_metadata_blocks($title);
+    [$subtitle, $subtitle_blocks] = ebook_extract_metadata_blocks($subtitle);
+    $metadata = ebook_apply_metadata_blocks(array_merge($title_blocks, $subtitle_blocks), $authors);
 
     if (!$authors) {
         throw new RuntimeException("No authors parsed for '{$name}'");
@@ -78,8 +117,10 @@ function ebook_parse_row(string $name, string $path, string $kind): array {
     return [
         'authors' => $authors,
         'authors_csv' => implode('; ', array_map(static fn (array $author): string => $author['name'], $authors)),
+        'authors_metadata_json' => build_authors_metadata_json($authors),
         'title' => $title,
         'subtitle' => $subtitle !== '' ? $subtitle : null,
+        'series' => $metadata['series'] !== '' ? $metadata['series'] : null,
         'format' => $format,
         'file_path' => $path,
         'raw_name' => $name,
@@ -88,7 +129,7 @@ function ebook_parse_row(string $name, string $path, string $kind): array {
 
 function ebook_group_key(array $parsed): string {
     return mb_strtolower(
-        $parsed['authors_csv'] . '|' . $parsed['title'] . '|' . ($parsed['subtitle'] ?? ''),
+        $parsed['authors_csv'] . '|' . ($parsed['authors_metadata_json'] ?? '') . '|' . $parsed['title'] . '|' . ($parsed['subtitle'] ?? '') . '|' . ($parsed['series'] ?? ''),
         'UTF-8'
     );
 }
@@ -162,7 +203,9 @@ while (($row = fgetcsv($in, 0, "\t")) !== false) {
         $groups[$key] = [
             'title' => $parsed['title'],
             'subtitle' => $parsed['subtitle'],
+            'series' => $parsed['series'],
             'authors_csv' => $parsed['authors_csv'],
+            'authors_metadata_json' => $parsed['authors_metadata_json'],
             'language' => 'unknown',
             'copies' => [],
         ];
@@ -200,7 +243,7 @@ if ($out === false) {
 
 $headers = [
     'ID', 'Title', 'Subtitle', 'Series', 'Language', 'Copy Count', 'Year', 'ISBN', 'LCCN', 'Notes',
-    'Publisher', 'Authors', 'Subjects', 'Loaned To', 'Loaned Date', 'Record Status', 'Bookcase', 'Shelf', 'Cover Image',
+    'Publisher', 'Authors', 'Authors Metadata JSON', 'Subjects', 'Loaned To', 'Loaned Date', 'Record Status', 'Bookcase', 'Shelf', 'Cover Image',
     'Cover Filename', 'Copies JSON',
 ];
 fputcsv($out, $headers, ',', '"', "\\");
@@ -212,7 +255,7 @@ foreach ($groups as $group) {
         '',
         $group['title'],
         $group['subtitle'] ?? '',
-        '',
+        $group['series'] ?? '',
         $group['language'],
         $copy_count,
         '',
@@ -221,6 +264,7 @@ foreach ($groups as $group) {
         '',
         '',
         $group['authors_csv'],
+        $group['authors_metadata_json'],
         '',
         '',
         '',

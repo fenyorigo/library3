@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.0 - 2026-06-06
+
+- Added relation-level ebook author aliases via `Books_Authors.author_alias` and the `{aka ...}` filename metadata convention.
+- Added `@...@` single-author phrase parsing so display names such as `@Dante@` are not split into family/given parts.
+- Extended ebook inventory CSV conversion and author metadata JSON roundtrip for alias-safe import/export without adding a new top-level CSV column.
+
 ## 3.1.5 - 2026-06-05
 
 - Added CSRF headers to cover upload and cover deletion requests in the book dialog.

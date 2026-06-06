@@ -7,7 +7,7 @@
 /*M!100616 SET @OLD_NOTE_VERBOSITY=@@NOTE_VERBOSITY, NOTE_VERBOSITY=0 */;
 /* BookCatalog schema baseline*/;
 /*  DB: books */;
-/*  version: 3.0.0 */;
+/*  version: 3.1.0 */;
 /*  generated: 2026-04-28 */;
 DROP TABLE IF EXISTS `AuthEvents`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -99,6 +99,7 @@ CREATE TABLE `Books_Authors` (
   `book_id` int(10) unsigned NOT NULL,
   `author_id` int(10) unsigned NOT NULL,
   `author_ord` int(11) NOT NULL DEFAULT 0,
+  `author_alias` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`book_id`,`author_id`),
   KEY `idx_books_authors_author` (`author_id`),
   CONSTRAINT `fk_books_authors_author` FOREIGN KEY (`author_id`) REFERENCES `Authors` (`author_id`) ON DELETE CASCADE,
