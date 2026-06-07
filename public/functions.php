@@ -82,6 +82,22 @@ function books_authors_has_author_alias(PDO $pdo): bool {
     return table_column_exists($pdo, 'Books_Authors', 'author_alias');
 }
 
+function next_book_id(PDO $pdo): int {
+    $next_id = (int)$pdo->query('SELECT COALESCE(MAX(book_id), 0) + 1 FROM Books')->fetchColumn();
+    return max(1, $next_id);
+}
+
+function reset_books_auto_increment(PDO $pdo): int {
+    $next_auto_increment = next_book_id($pdo);
+    $driver = strtolower((string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME));
+    if ($driver === 'sqlite') {
+        $pdo->prepare("DELETE FROM sqlite_sequence WHERE name = 'Books'")->execute();
+        return $next_auto_increment;
+    }
+    $pdo->exec('ALTER TABLE Books AUTO_INCREMENT = ' . $next_auto_increment);
+    return $next_auto_increment;
+}
+
 function archive_should_skip_path(string $path): bool {
     $parts = preg_split('#[\\\\/]+#', str_replace('\\', '/', $path)) ?: [];
     foreach ($parts as $part) {

@@ -126,15 +126,17 @@ try {
         isset($d['placement']['shelf_no']) ? (int)$d['placement']['shelf_no'] : null
     );
 
-    // INSERT — matches your schema (no added_date; no back_image)
+    // INSERT — assign the next logical ID explicitly; this does not require ALTER privileges.
+    $book_id = next_book_id($pdo);
     $stmt = $pdo->prepare("
         INSERT INTO Books
-          (title, subtitle, series, language, copy_count, publisher_id, year_published,
+          (book_id, title, subtitle, series, language, copy_count, publisher_id, year_published,
            isbn, lccn, notes, cover_image, cover_thumb, placement_id,
            loaned_to, loaned_date)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
     $stmt->execute([
+        $book_id,
         $title,
         $subtitle,
         $series,
@@ -152,7 +154,6 @@ try {
         $loaned_date,
     ]);
 
-    $book_id = (int)$pdo->lastInsertId();
 
     if ($copies_in !== null && bookcopies_table_exists($pdo)) {
         $saved_copies = replace_book_copies($pdo, $book_id, $copies_in);

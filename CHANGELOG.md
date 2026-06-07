@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.2 - 2026-06-07
+
+- Fixed restored catalogs whose `Books` AUTO_INCREMENT value could remain higher than the actual book ID range.
+- Avoided requiring ALTER privileges during manual book creation by assigning the next logical book ID explicitly.
+- Normalized the Books AUTO_INCREMENT after imports when the database user has permission, with a warning fallback otherwise.
+
 ## 3.2.1 - 2026-06-06
 
 - Display relation-level author aliases in book detail and edit views.
