@@ -89,6 +89,8 @@ Schema baseline: `00-basedata/sql/schema.sql` (v3.1.0). Incremental migrations a
 
 The app supports two CSV formats: v2 (legacy) and v3. The NeoFinder → v3 converter is at `00-basedata/scripts/convert_ebook_inventory.php`.
 
+Full CSV format and ebook filename conventions: `docs/csv-format.md`
+
 ### Security
 
 Mutations require CSRF tokens (set in session, sent as `X-CSRF-Token` header by `api.js`). File uploads validate magic bytes server-side. Cover images are stored in `public/uploads/` which has PHP execution blocked by `.htaccess`. ZIP imports are protected against path traversal.
