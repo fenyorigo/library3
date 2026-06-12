@@ -96,7 +96,7 @@ export async function addBook(payload = {}, coverFile = null) {
     const fd = new FormData();
     fd.append("payload", JSON.stringify(payload));
     fd.append("image", coverFile);
-    const res = await apiFetch(apiUrl("addBook.php"), {
+    const res = await apiFetch(apiUrl("add_book.php"), {
       method: "POST",
       body: fd,
       credentials: "same-origin",
@@ -104,7 +104,7 @@ export async function addBook(payload = {}, coverFile = null) {
     return parseJsonResponse(res);
   }
 
-  const res = await apiFetch(apiUrl("addBook.php"), {
+  const res = await apiFetch(apiUrl("add_book.php"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
