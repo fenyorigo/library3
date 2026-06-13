@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.2.4 - 2026-06-13
+
+- BookList: added fixed-width CSS classes `.w-subtitle` (160 px), `.w-series` (140 px), `.w-authors` (180 px) with wrapping text (no ellipsis truncation).
+- BookList: authors column now renders each semicolon-separated author on its own line instead of a single concatenated string.
+
+## 3.2.3 - 2026-06-12
+
+- Renamed `public/addBook.php` → `add_book.php` to follow the snake_case endpoint naming convention; updated `api.js` references.
+- Added `CLAUDE.md` with project documentation and coding conventions.
+- Added `docs/csv-format.md` with full CSV format and ebook filename reference.
+
 ## 3.2.2 - 2026-06-07
 
 - Fixed restored catalogs whose `Books` AUTO_INCREMENT value could remain higher than the actual book ID range.

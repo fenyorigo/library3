@@ -117,6 +117,18 @@ Mutations require CSRF tokens (set in session, sent as `X-CSRF-Token` header by 
 - Extra top-level fields beside `data` (e.g. `message`, `mode`) are tolerated
   legacy; new endpoints put everything inside `data`.
 
+### Build requirement
+- After any frontend (Vue/TS/JS/CSS) change, run `npm run build` from
+  `frontend/` before committing. The `public/dist/` output is checked in
+  and served directly — skipping the build means the deployed app does
+  not reflect the change.
+- PHP-only changes do not require a build.
+
+### Changelog
+- Update `CHANGELOG.md` (project root) before every release commit.
+- Add a new `## X.Y.Z - YYYY-MM-DD` section at the top describing what
+  changed. Write it before committing — not retroactively.
+
 ### General
 - No new framework, router, or dependency without asking first.
 - New shared logic goes into functions.php only if reused by multiple

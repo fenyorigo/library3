@@ -61,19 +61,19 @@
             </button>
           </th>
 
-          <th v-if="columns.show_subtitle" :aria-sort="ariaSort('subtitle')">
+          <th v-if="columns.show_subtitle" class="w-subtitle" :aria-sort="ariaSort('subtitle')">
             <button class="th-btn" @click.prevent="toggleSort('subtitle')">
               <span>Subtitle</span><span class="chev">{{ chevron('subtitle') }}</span>
             </button>
           </th>
 
-          <th v-if="columns.show_series" :aria-sort="ariaSort('series')">
+          <th v-if="columns.show_series" class="w-series" :aria-sort="ariaSort('series')">
             <button class="th-btn" @click.prevent="toggleSort('series')">
               <span>Series</span><span class="chev">{{ chevron('series') }}</span>
             </button>
           </th>
 
-          <th :aria-sort="ariaSort('authors')">
+          <th class="w-authors" :aria-sort="ariaSort('authors')">
             <button class="th-btn" @click.prevent="toggleSort('authors')">
               <span>Authors</span><span class="chev">{{ chevron('authors') }}</span>
             </button>
@@ -183,11 +183,13 @@
           </td>
 
           <!-- Subtitle column -->
-          <td v-if="columns.show_subtitle" class="subtitle-cell">{{ b.subtitle || '—' }}</td>
+          <td v-if="columns.show_subtitle" class="w-subtitle">{{ b.subtitle || '—' }}</td>
 
-          <td v-if="columns.show_series" class="series-cell">{{ b.series || '—' }}</td>
+          <td v-if="columns.show_series" class="w-series">{{ b.series || '—' }}</td>
 
-          <td class="authors-cell">{{ b.authors }}</td>
+          <td class="w-authors">
+            <template v-for="(author, i) in splitAuthors(b.authors)" :key="i">{{ author }}<br v-if="i < splitAuthors(b.authors).length - 1"></template>
+          </td>
           <td v-if="columns.show_is_hungarian" class="hu-cell">
             <span v-if="formatHu(b) === 'Mixed'" class="badge mixed">Mixed</span>
             <span v-else>{{ formatHu(b) }}</span>
@@ -390,6 +392,9 @@ const coverSrc = (book) => {
   const raw = (book && (book.cover_thumb || book.cover_image)) || fallback;
   return assetUrl(raw);
 };
+
+const splitAuthors = (authors) =>
+  authors ? authors.split(';').map((a) => a.trim()).filter(Boolean) : [];
 </script>
 
 <style>
@@ -422,6 +427,18 @@ thead th {
 .w-status { width: 7.5rem; white-space: nowrap; }
 .w-hu { width: 4rem; white-space: nowrap; text-align: center; }
 .w-actions { width: 11rem; white-space: nowrap; }
+
+.w-subtitle,
+.w-series,
+.w-authors {
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: normal;
+  hyphens: none;
+}
+.w-subtitle { width: 160px; }
+.w-series   { width: 140px; }
+.w-authors  { width: 180px; }
 
 .actions {
   display: flex;
@@ -458,9 +475,6 @@ thead th {
   border: 1px solid #ddd;
 }
 
-.subtitle-cell,
-.series-cell,
-.authors-cell,
 .publisher-cell,
 .status-cell,
 .hu-cell,
