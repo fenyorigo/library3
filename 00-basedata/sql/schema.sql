@@ -1,4 +1,8 @@
-/*M!999999\- enable the sandbox mode */ 
+/*M!999999\- enable the sandbox mode */
+/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
+/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
+/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
+/*!40101 SET NAMES utf8mb4 */;
 /*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;
 /*!40103 SET TIME_ZONE='+00:00' */;
 /*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;
@@ -6,9 +10,9 @@
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 /*M!100616 SET @OLD_NOTE_VERBOSITY=@@NOTE_VERBOSITY, NOTE_VERBOSITY=0 */;
 /* BookCatalog schema baseline*/;
-/*  DB: books */;
-/*  version: 3.1.0 */;
-/*  generated: 2026-04-28 */;
+/*  DB: books3 */;
+/*  version: 3.1.1 */;
+/*  generated: 2026-06-15 */;
 DROP TABLE IF EXISTS `AuthEvents`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;
@@ -43,6 +47,26 @@ CREATE TABLE `Authors` (
   KEY `idx_authors_name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `BookCopies`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `BookCopies` (
+  `copy_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `book_id` int(10) unsigned NOT NULL,
+  `format` varchar(20) NOT NULL,
+  `quantity` int(11) NOT NULL DEFAULT 1,
+  `physical_location` varchar(255) DEFAULT NULL,
+  `file_path` varchar(1024) DEFAULT NULL,
+  `file_size` bigint(20) unsigned NOT NULL DEFAULT 0,
+  `notes` text DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `updated_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`copy_id`),
+  KEY `idx_bookcopies_book` (`book_id`),
+  KEY `idx_bookcopies_format` (`format`),
+  CONSTRAINT `fk_bookcopies_book` FOREIGN KEY (`book_id`) REFERENCES `Books` (`book_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `Books`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;
@@ -53,7 +77,6 @@ CREATE TABLE `Books` (
   `series` varchar(255) DEFAULT NULL,
   `record_status` enum('active','deleted') NOT NULL DEFAULT 'active',
   `language` varchar(10) NOT NULL DEFAULT 'unknown',
-  /* deprecated in v3; canonical quantity lives in BookCopies.quantity */
   `copy_count` int(11) NOT NULL DEFAULT 1,
   `publisher_id` int(10) unsigned DEFAULT NULL,
   `year_published` int(11) DEFAULT NULL,
@@ -71,25 +94,6 @@ CREATE TABLE `Books` (
   KEY `idx_books_year` (`year_published`),
   CONSTRAINT `fk_books_placement` FOREIGN KEY (`placement_id`) REFERENCES `Placement` (`placement_id`) ON DELETE SET NULL,
   CONSTRAINT `fk_books_publisher` FOREIGN KEY (`publisher_id`) REFERENCES `Publishers` (`publisher_id`) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `BookCopies`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `BookCopies` (
-  `copy_id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-  `book_id` int(10) unsigned NOT NULL,
-  `format` varchar(20) NOT NULL,
-  `quantity` int(11) NOT NULL DEFAULT 1,
-  `physical_location` varchar(255) DEFAULT NULL,
-  `file_path` varchar(1024) DEFAULT NULL,
-  `notes` text DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  `updated_at` datetime DEFAULT NULL,
-  PRIMARY KEY (`copy_id`),
-  KEY `idx_bookcopies_book` (`book_id`),
-  KEY `idx_bookcopies_format` (`format`),
-  CONSTRAINT `fk_bookcopies_book` FOREIGN KEY (`book_id`) REFERENCES `Books` (`book_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `Books_Authors`;
@@ -177,6 +181,7 @@ CREATE TABLE `UserPreferences` (
   `show_format` tinyint(1) NOT NULL DEFAULT 0,
   `show_year` tinyint(1) NOT NULL DEFAULT 1,
   `show_copy_count` tinyint(1) NOT NULL DEFAULT 0,
+  `show_file_size` tinyint(1) NOT NULL DEFAULT 0,
   `show_status` tinyint(1) NOT NULL DEFAULT 1,
   `show_placement` tinyint(1) NOT NULL DEFAULT 1,
   `show_isbn` tinyint(1) NOT NULL DEFAULT 0,
@@ -218,8 +223,10 @@ CREATE TABLE `duplicate_review` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
-
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
 /*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
 /*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
+/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
+/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
+/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*M!100616 SET NOTE_VERBOSITY=@OLD_NOTE_VERBOSITY */;

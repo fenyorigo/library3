@@ -120,6 +120,10 @@
               Copies
             </label>
             <label class="inline">
+              <input type="checkbox" v-model="form.show_file_size" />
+              File size
+            </label>
+            <label class="inline">
               <input type="checkbox" v-model="form.show_status" />
               Status
             </label>
@@ -189,6 +193,7 @@ const form = ref({
   show_format: false,
   show_year: true,
   show_copy_count: false,
+  show_file_size: false,
   show_status: true,
   show_placement: true,
   show_isbn: false,
@@ -239,6 +244,7 @@ watch(
       show_format: typeof prefs?.show_format === "boolean" ? prefs.show_format : false,
       show_year: typeof prefs?.show_year === "boolean" ? prefs.show_year : true,
       show_copy_count: typeof prefs?.show_copy_count === "boolean" ? prefs.show_copy_count : false,
+      show_file_size: typeof prefs?.show_file_size === "boolean" ? prefs.show_file_size : false,
       show_status: typeof prefs?.show_status === "boolean" ? prefs.show_status : true,
       show_placement: typeof prefs?.show_placement === "boolean" ? prefs.show_placement : true,
       show_isbn: typeof prefs?.show_isbn === "boolean" ? prefs.show_isbn : false,
@@ -301,6 +307,7 @@ const save = async () => {
       show_format: form.value.show_format,
       show_year: form.value.show_year,
       show_copy_count: form.value.show_copy_count,
+      show_file_size: form.value.show_file_size,
       show_status: form.value.show_status,
       show_placement: form.value.show_placement,
       show_isbn: form.value.show_isbn,

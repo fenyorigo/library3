@@ -24,8 +24,9 @@ $pdo = pdo();
  */
 $q        = isset($_GET['q']) ? trim((string)$_GET['q']) : '';
 $format_filter_raw = strtolower(trim((string)($_GET['format'] ?? '')));
-$allowed_formats = ['print', 'epub', 'mobi', 'azw3', 'pdf', 'djvu', 'lit', 'prc', 'rtf', 'odt'];
+$allowed_formats = ['print', 'epub', 'mobi', 'pdf', 'djvu', 'prc', 'rtf'];
 $format_filter = in_array($format_filter_raw, $allowed_formats, true) ? $format_filter_raw : null;
+$format_filter_ebooks = ($format_filter_raw === 'ebooks');
 $language_filter_raw = strtolower(trim((string)($_GET['language'] ?? '')));
 $allowed_languages = ['unknown', 'hu', 'en', 'de', 'fr'];
 $language_filter = in_array($language_filter_raw, $allowed_languages, true) ? $language_filter_raw : null;
@@ -146,6 +147,12 @@ if ($format_filter !== null) {
         AND bcf.format = :format_filter
     )";
   $params['format_filter'] = $format_filter;
+} elseif ($format_filter_ebooks) {
+  $where_chunks[] = "EXISTS (
+      SELECT 1 FROM BookCopies bcf
+      WHERE bcf.book_id = b.book_id
+        AND bcf.format != 'print'
+    )";
 }
 
 if ($language_filter !== null) {

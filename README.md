@@ -69,31 +69,85 @@ The repository includes a helper script for converting NeoFinder exports into Bo
 
 `00-basedata/scripts/convert_ebook_inventory.php`
 
-Usage:
+### Usage
 
 ```bash
 php 00-basedata/scripts/convert_ebook_inventory.php <input.tsv> [output.csv]
 ```
 
-Expected TSV header:
+If `output.csv` is omitted the output file is written next to the input as `<input>.bookcatalog_v3.csv`.
 
-```text
-Name    Path    Kind
+A JSON summary (book count, copy count, warning count) is printed to stdout. Individual parse warnings go to stderr.
+
+### Producing the NeoFinder export
+
+In NeoFinder: **File → Export catalog** (or the equivalent Find Results export). Choose **Tab-separated** format and make sure the columns **Name**, **Path**, and **Size** are included. The `Kind` column is optional and ignored.
+
+The script scans forward from the top of the file until it finds a header row containing all three required columns, so any metadata lines NeoFinder prefixes before the header are automatically skipped.
+
+### Required TSV columns
+
+| Column | Content |
+|--------|---------|
+| `Name` | Filename including extension (`Author - Title.epub`) |
+| `Path` | Absolute filesystem path to the file |
+| `Size` | File size in bytes (integer) |
+
+### Filename conventions
+
+Filenames must follow the pattern:
+
+```
+Author - Title.ext
+Author - Title - Subtitle.ext
+Author1; Author2 - Title {Series Name} [hu].ext
 ```
 
-What the converter does:
+- The separator between author and title is ` - ` (space, hyphen/en-dash/em-dash, space).
+- Multiple authors are separated by `;`.
+- Supported formats: `epub`, `mobi`, `azw3`, `pdf`, `djvu`, `lit`, `prc`, `rtf`, `odt`.
+- Entries with no file extension (folder rows) are skipped automatically.
 
-- parses filenames into author, title, and subtitle
-- groups multiple ebook formats of the same work into one record
-- skips duplicate copies
-- writes a v3-compatible import CSV
-- leaves language as `unknown`; imports still try title/subtitle-based detection, but only use the author-name Hungarian fallback when the source format omits the language field entirely
+**Language tags** — append `[hu]`, `[en]`, `[de]`, `[fr]` etc. to the title or subtitle:
 
-Notes:
+```
+Author - Title [hu].epub          → language: hu
+Author - Title - Subtitle [en].epub → language: en (from subtitle)
+```
 
-- NeoFinder exports may contain legacy macOS `:` path separators.
-- Path normalization is handled during import.
-- Filename parsing supports hyphen, en dash, and em dash separators.
+If no language tag is present the script also checks the path for segments matching `0_HU`, `1_EN`, etc.:
+
+```
+/Volumes/Data/0_HU/Author - Title.epub → language: hu
+```
+
+**Metadata blocks** — curly-brace blocks anywhere in the title or subtitle carry extra metadata:
+
+```
+Author - Title {Series Name}.epub           → series: "Series Name"
+Author - Title {Series Name} {aka Pen Name}.epub → series + alias
+```
+
+- `{aka Pen Name}` sets an author alias (`Books_Authors.author_alias`) on the first author.
+- Any other `{...}` block is treated as a series name.
+
+**Single-author display names** — wrap in `@...@` to prevent the name from being split into family/given parts:
+
+```
+@Dante@ - Title.epub
+```
+
+### Grouping logic
+
+Multiple files with the same author(s) + title + subtitle + series are grouped into one book record with multiple copies. Exact duplicates (same format + same path) within a group are skipped with a warning.
+
+### What the converter writes
+
+- A v3-compatible CSV importable via **Import books → CSV only**.
+- Language is set from filename tags or path segment; falls back to `unknown` (import-time title heuristics then apply).
+- `copies_json` column carries all copy rows (format, file_path, file_size) for the record.
+- `authors_metadata_json` carries structured author data including aliases.
+- ID, Year, ISBN, Publisher, Subjects columns are left empty — fill in manually after import if needed.
 
 ## Security
 
@@ -119,5 +173,5 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.2.2**  
-Current schema version: **3.1.0**
+Current application version: **3.3.0**  
+Current schema version: **3.1.1**

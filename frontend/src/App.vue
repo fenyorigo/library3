@@ -39,16 +39,14 @@
           <span>Format</span>
           <select v-model="formatFilter" :disabled="loading" @change="onFormatFilterChange">
             <option value="">All</option>
-            <option value="print">print</option>
-            <option value="epub">epub</option>
-            <option value="mobi">mobi</option>
-            <option value="azw3">azw3</option>
-            <option value="pdf">pdf</option>
-            <option value="djvu">djvu</option>
-            <option value="lit">lit</option>
-            <option value="prc">prc</option>
-            <option value="rtf">rtf</option>
-            <option value="odt">odt</option>
+            <option value="print">Print</option>
+            <option value="ebooks">Ebooks</option>
+            <option value="epub">EPUB</option>
+            <option value="mobi">MOBI</option>
+            <option value="pdf">PDF</option>
+            <option value="djvu">DJVU</option>
+            <option value="prc">PRC</option>
+            <option value="rtf">RTF</option>
           </select>
         </label>
         <label class="inline-filter">
@@ -74,6 +72,7 @@
         <button v-if="isAdmin" class="primary" @click="openAdd">+ Add Book</button>
         <button v-if="isAdmin" @click="openCsvImport">Import books</button>
         <button v-if="isAdmin" @click="onRebuildThumbs">Rebuild thumbs</button>
+        <button v-if="isAdmin" @click="onExtractEbookCovers">Extract ebook covers</button>
         <button
           v-if="isAdmin"
           class="link-btn"
@@ -178,6 +177,17 @@
           Rebuilding thumbnails…
           <span v-if="rebuildThumbsTotal"> {{ rebuildThumbsDone }} / {{ rebuildThumbsTotal }}</span>
           <span v-else> {{ rebuildThumbsDone }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="extractCoversBusy" class="busy-overlay" aria-live="polite">
+      <div class="busy-card">
+        <div class="spinner" aria-hidden="true"></div>
+        <div>
+          Extracting ebook covers…
+          <span v-if="extractCoversTotal"> {{ extractCoversDone }} / {{ extractCoversTotal }} ({{ extractCoversExtracted }} extracted)</span>
+          <span v-else> {{ extractCoversDone }}</span>
         </div>
       </div>
     </div>
@@ -298,6 +308,10 @@ const rebuildThumbsTotal = ref(0);
 const rebuildThumbsUpdated = ref(0);
 const rebuildThumbsErrors = ref(0);
 const rebuildThumbsErrorList = ref([]);
+const extractCoversBusy = ref(false);
+const extractCoversDone = ref(0);
+const extractCoversTotal = ref(0);
+const extractCoversExtracted = ref(0);
 const backupBusy = ref(false);
 const backupBusyMessage = ref("");
 const purgeBusy = ref(false);
@@ -1137,6 +1151,46 @@ const onRebuildThumbs = async () => {
     alert(err && err.message ? err.message : "Rebuild failed.");
   } finally {
     rebuildThumbsBusy.value = false;
+  }
+};
+
+const onExtractEbookCovers = async () => {
+  if (!ensureAdmin()) return;
+  if (!confirm("Extract covers from epub/pdf files for books that have no cover yet?")) return;
+  extractCoversBusy.value = true;
+  extractCoversDone.value = 0;
+  extractCoversTotal.value = 0;
+  extractCoversExtracted.value = 0;
+  try {
+    const batchSize = 5;
+    let offset = 0;
+    while (true) {
+      const params = new URLSearchParams({
+        limit: String(batchSize),
+        offset: String(offset),
+      });
+      const url = apiUrl(`extract_ebook_covers.php?${params.toString()}`);
+      const res = await fetch(url, { credentials: "same-origin" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) throw new Error(data.error || "Extraction failed");
+      const payload = data?.data || {};
+      const processed = payload.processed ?? 0;
+      const extracted = payload.extracted ?? 0;
+      const total = payload.total ?? 0;
+
+      if (!extractCoversTotal.value && total) extractCoversTotal.value = total;
+      extractCoversDone.value += processed;
+      extractCoversExtracted.value += extracted;
+
+      if (processed <= 0) break;
+      if (total && extractCoversDone.value >= total) break;
+      offset += batchSize;
+    }
+    alert(`Done.\nProcessed: ${extractCoversDone.value}\nExtracted: ${extractCoversExtracted.value}`);
+  } catch (err) {
+    alert(err && err.message ? err.message : "Extraction failed.");
+  } finally {
+    extractCoversBusy.value = false;
   }
 };
 

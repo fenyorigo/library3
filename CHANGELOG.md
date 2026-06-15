@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.3.0 - 2026-06-15
+
+- **Ebook cover extraction** as a separate admin action ("Extract ebook covers" button): polls books with epub/pdf copies that have no cover, extracts covers in batches of 5, shows live progress overlay. epub: ZipArchive + OPF manifest (EPUB3 `cover-image` property, EPUB2 `<meta name="cover">`). PDF: `magick` via `proc_open` with 10 s hard timeout (avoids PHP-FPM hangs from Ghostscript).
+- **Format filter** in book list: added "Ebooks" group option (matches all non-print formats); removed azw3, lit, odt individual options; options now use display-case labels (Print, Ebooks, EPUB, MOBI, PDF, DJVU, PRC, RTF).
+- **schema.sql** regenerated from live DB as the new authoritative baseline; incremental migration files are no longer needed for fresh installs from this version onward.
+- README: expanded NeoFinder conversion section with full filename convention reference, TSV column table, language tag and metadata block documentation.
+- Fixed `show_file_size` preference not saving (missing `fd.append` in `api.js`).
+- Schema version: 3.1.1 (unchanged). DB: `books3`.
+
+## 3.2.5 - 2026-06-15
+
+- Schema 3.1.1: added `file_size` (BIGINT, bytes) to `BookCopies` and `show_file_size` to `UserPreferences`.
+- NeoFinder TSV converter: supports `Name`/`Path`/`Size` columns (no `Kind`); skips folder entries; extracts language from `[hu]`/`[en]`/`[de]`/`[fr]` tags in titles and from path segments (`0_HU` etc.); handles `\r`-only Mac line endings.
+- BookList: new toggleable **Size (MB)** column showing total ebook file size per book (sum of copies, 1 decimal).
+- BookDialog: file size shown read-only in View and Edit modals.
+- Preferences: added File size toggle to Personalize menu.
+
 ## 3.2.4 - 2026-06-13
 
 - BookList: added fixed-width CSS classes `.w-subtitle` (160 px), `.w-series` (140 px), `.w-authors` (180 px) with wrapping text (no ellipsis truncation).

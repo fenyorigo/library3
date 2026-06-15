@@ -107,6 +107,7 @@ Each element of the `copies_json` array is a copy object:
   "quantity": 1,
   "physical_location": null,
   "file_path": "/Volumes/Books/Author - Title.epub",
+  "file_size": 73335,
   "notes": null
 }
 ```
@@ -117,6 +118,7 @@ Each element of the `copies_json` array is a copy object:
 | `quantity`          | integer         | Number of physical copies (typically 1). |
 | `physical_location` | string \| null  | Free-text shelf location. |
 | `file_path`         | string \| null  | Absolute path to the ebook file; null for print. |
+| `file_size`         | integer         | File size in bytes. 0 for print copies or when unknown. Displayed in MB in the UI. |
 | `notes`             | string \| null  | Per-copy notes. |
 
 If `copies_json` is empty or absent on import, the importer falls back to creating a single
@@ -165,8 +167,10 @@ Non-alphanumeric characters (except `.`, `_`, `-`) are replaced with `_`.
 ## NeoFinder Ebook Filename Convention
 
 `convert_ebook_inventory.php` converts a NeoFinder TSV export (columns: `Name`, `Path`,
-`Kind`) to v3 CSV. The `Name` column contains the ebook filename, which encodes
-bibliographic metadata in a structured format.
+`Size`) to v3 CSV. The `Name` column contains the ebook filename, which encodes
+bibliographic metadata in a structured format. The `Size` column (bytes) is stored as
+`file_size` on each copy. Rows without a file extension (NeoFinder folder summary rows,
+e.g. `0_HU`, `1_EN`, `2_DE`, `3_FR`) are silently skipped.
 
 ### Filename structure
 

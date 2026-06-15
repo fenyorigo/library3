@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-BookCatalog v3 is a personal book catalog web application for managing mixed print/ebook collections. It stores bibliographic metadata; ebook files are not ingested—only file paths are recorded. The current schema version is 3.1.0.
+BookCatalog v3 is a personal book catalog web application for managing mixed print/ebook collections. It stores bibliographic metadata; ebook files are not ingested—only file paths are recorded. The current schema version is 3.1.1.
 Repository: https://github.com/fenyorigo/library3
 
 ## Commands
@@ -83,7 +83,7 @@ Key config files:
 
 ### Database Migrations
 
-Schema baseline: `00-basedata/sql/schema.sql` (v3.1.0). Incremental migrations are in `00-basedata/sql/migrations/`. Apply them manually via MySQL CLI.
+Schema baseline: `00-basedata/sql/schema.sql` (v3.1.1). Incremental migrations are in `00-basedata/sql/migrations/`. Apply them manually via MySQL CLI.
 
 ### CSV Import
 
@@ -111,7 +111,7 @@ Mutations require CSRF tokens (set in session, sent as `X-CSRF-Token` header by 
 
 ### Versioning
 - App version lives in frontend/package.json (with package-lock.json).
-- DB schema version (currently 3.1.0) is independent — bump only when
+- DB schema version (currently 3.1.1) is independent — bump only when
   the schema actually changes, via a new migration file.
 - Do not use `die_with_error()` — it is dead code, scheduled for removal.
 - Extra top-level fields beside `data` (e.g. `message`, `mode`) are tolerated

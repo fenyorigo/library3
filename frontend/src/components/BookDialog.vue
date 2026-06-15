@@ -221,6 +221,7 @@
                     <th>Qty</th>
                     <th>Physical location</th>
                     <th>File path</th>
+                    <th>Size</th>
                     <th>Notes</th>
                   </tr>
                 </thead>
@@ -230,6 +231,7 @@
                     <td>{{ copy.quantity || 1 }}</td>
                     <td>{{ copy.physical_location || "—" }}</td>
                     <td>{{ copy.file_path || "—" }}</td>
+                    <td>{{ formatFileSize(copy.file_size) }}</td>
                     <td>{{ copy.notes || "—" }}</td>
                   </tr>
                 </tbody>
@@ -243,6 +245,7 @@
                 <input v-model.number="copy.quantity" type="number" min="1" placeholder="Qty" />
                 <input v-model.trim="copy.physical_location" :disabled="copy.format !== 'print'" placeholder="Physical location" />
                 <input v-model.trim="copy.file_path" :disabled="copy.format === 'print'" placeholder="/path/to/file" />
+                <span class="ro copy-size">{{ formatFileSize(copy.file_size) }}</span>
                 <input v-model.trim="copy.notes" placeholder="Notes" />
                 <button type="button" class="ghost small-btn" @click="removeCopyRow(idx)">Delete</button>
               </div>
@@ -351,6 +354,12 @@ const LANGUAGE_OPTIONS = [
 
 const FORMAT_OPTIONS = ["print", "epub", "mobi", "azw3", "pdf", "djvu", "lit", "prc", "rtf", "odt"];
 
+const formatFileSize = (bytes) => {
+  const n = Number(bytes || 0);
+  if (n <= 0) return "—";
+  return (n / 1048576).toFixed(1) + " MB";
+};
+
 const emit = defineEmits([
   "close",
   "switch-edit",
@@ -381,6 +390,7 @@ const normalizeCopy = (copy = {}) => ({
   quantity: Math.max(1, Number(copy.quantity || 1)),
   physical_location: copy.physical_location || "",
   file_path: copy.file_path || "",
+  file_size: Number(copy.file_size || 0),
   notes: copy.notes || "",
 });
 
@@ -881,6 +891,7 @@ const save = () => {
       ? (physicalFromPlacement || normalizePrintPhysicalLocation(copy.physical_location))
       : ((copy.physical_location || "").trim() || null),
     file_path: copy.format === "print" ? null : ((copy.file_path || "").trim() || null),
+    file_size: copy.format === "print" ? 0 : Number(copy.file_size || 0),
     notes: (copy.notes || "").trim() || null,
   }));
   if (!payload.copies.length) {

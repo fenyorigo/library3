@@ -113,6 +113,10 @@
             </button>
           </th>
 
+          <th v-if="columns.show_file_size" class="w-year">
+            <span>Size (MB)</span>
+          </th>
+
           <th v-if="columns.show_status" class="w-status" :aria-sort="ariaSort('status')">
             <button class="th-btn" @click.prevent="toggleSort('status')">
               <span>Status</span><span class="chev">{{ chevron('status') }}</span>
@@ -199,6 +203,7 @@
           <td v-if="columns.show_format">{{ b.format_summary || '—' }}</td>
           <td v-if="columns.show_year">{{ b.year_published || '—' }}</td>
           <td v-if="columns.show_copy_count">{{ b.copy_count || 1 }}</td>
+          <td v-if="columns.show_file_size">{{ bookTotalFileSizeMB(b) }}</td>
 
           <td v-if="columns.show_status" class="status-cell">{{ b.loan_status || '—' }}</td>
 
@@ -310,6 +315,7 @@ const columnDefaults = {
   show_format: false,
   show_year: true,
   show_copy_count: false,
+  show_file_size: false,
   show_status: true,
   show_placement: true,
   show_isbn: false,
@@ -354,6 +360,13 @@ const resultsSummary = computed(() => {
 
   return `Results: ${start}-${end} of ${totalCount} (${totalCount} images)`;
 });
+
+const bookTotalFileSizeMB = (book) => {
+  const copies = Array.isArray(book?.copies) ? book.copies : [];
+  const total = copies.reduce((sum, c) => sum + Number(c.file_size || 0), 0);
+  if (total <= 0) return "0";
+  return (total / 1048576).toFixed(1);
+};
 
 const formatHu = (book) => {
   if (!book || !book.authors) return "—";

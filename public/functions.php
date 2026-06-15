@@ -9,7 +9,7 @@ declare(strict_types=1);
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
 
-const SCHEMA_VERSION = '3.1.0';
+const SCHEMA_VERSION = '3.1.1';
 
 /* --------------------------- Error helpers --------------------------- */
 
@@ -586,6 +586,7 @@ function normalize_user_preferences(array $row): array {
         'show_format' => $bool($row['show_format'] ?? null, false),
         'show_year' => $bool($row['show_year'] ?? null, true),
         'show_copy_count' => $bool($row['show_copy_count'] ?? null, false),
+        'show_file_size' => $bool($row['show_file_size'] ?? null, false),
         'show_status' => $bool($row['show_status'] ?? null, true),
         'show_placement' => $bool($row['show_placement'] ?? null, true),
         'show_isbn' => $bool($row['show_isbn'] ?? null, false),
@@ -600,6 +601,7 @@ function fetch_user_preferences(PDO $pdo, int $user_id): array {
     static $has_show_copy_count = null;
     static $has_show_language = null;
     static $has_show_format = null;
+    static $has_show_file_size = null;
     if ($has_show_copy_count === null) {
         try {
             $col = $pdo->prepare("
@@ -642,6 +644,20 @@ function fetch_user_preferences(PDO $pdo, int $user_id): array {
             $has_show_format = false;
         }
     }
+    if ($has_show_file_size === null) {
+        try {
+            $col = $pdo->prepare("
+                SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'UserPreferences'
+                  AND COLUMN_NAME = 'show_file_size'
+            ");
+            $col->execute();
+            $has_show_file_size = ((int)$col->fetchColumn() > 0);
+        } catch (Throwable $e) {
+            $has_show_file_size = false;
+        }
+    }
 
     $select_cols = "logo_path, bg_color, fg_color, text_size, per_page,
                     show_cover, show_subtitle, show_series, show_is_hungarian,
@@ -655,6 +671,9 @@ function fetch_user_preferences(PDO $pdo, int $user_id): array {
     }
     if ($has_show_copy_count) {
         $select_cols .= ", show_copy_count";
+    }
+    if ($has_show_file_size) {
+        $select_cols .= ", show_file_size";
     }
 
     $st = $pdo->prepare("SELECT {$select_cols}
@@ -678,6 +697,7 @@ function fetch_user_preferences(PDO $pdo, int $user_id): array {
             'show_format' => false,
             'show_year' => true,
             'show_copy_count' => false,
+            'show_file_size' => false,
             'show_status' => true,
             'show_placement' => true,
             'show_isbn' => false,
@@ -700,6 +720,20 @@ function bookcopies_table_exists(PDO $pdo): bool {
         SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'BookCopies'
+    ");
+    $exists = (int)$st->fetchColumn() > 0;
+    return $exists;
+}
+
+function bookcopies_has_file_size(PDO $pdo): bool {
+    static $exists = null;
+    if ($exists !== null) return $exists;
+
+    $st = $pdo->query("
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'BookCopies'
+          AND COLUMN_NAME = 'file_size'
     ");
     $exists = (int)$st->fetchColumn() > 0;
     return $exists;
@@ -1171,6 +1205,7 @@ function normalize_book_copy_input(array $copy, int $index = 0): array {
         'quantity' => $quantity,
         'physical_location' => N($copy['physical_location'] ?? null),
         'file_path' => $format === 'print' ? null : normalize_book_copy_file_path($copy['file_path'] ?? null),
+        'file_size' => $format === 'print' ? 0 : max(0, (int)($copy['file_size'] ?? 0)),
         'notes' => N($copy['notes'] ?? null),
         '_index' => $index,
     ];
@@ -1181,8 +1216,9 @@ function fetch_book_copies_map(PDO $pdo, array $book_ids): array {
     if (!$book_ids || !bookcopies_table_exists($pdo)) return [];
 
     $placeholders = implode(',', array_fill(0, count($book_ids), '?'));
+    $fs_col = bookcopies_has_file_size($pdo) ? ', file_size' : '';
     $st = $pdo->prepare("
-        SELECT copy_id, book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at
+        SELECT copy_id, book_id, format, quantity, physical_location, file_path{$fs_col}, notes, created_at, updated_at
         FROM BookCopies
         WHERE book_id IN ($placeholders)
         ORDER BY book_id ASC, FIELD(format, 'print', 'epub', 'mobi', 'azw3', 'pdf', 'djvu', 'lit', 'prc', 'rtf', 'odt'), copy_id ASC
@@ -1371,22 +1407,34 @@ function replace_book_copies(PDO $pdo, int $book_id, array $copies): array {
     $del = $pdo->prepare('DELETE FROM BookCopies WHERE book_id = ?');
     $del->execute([$book_id]);
 
-    $ins = $pdo->prepare("
-        INSERT INTO BookCopies
-            (book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at)
-        VALUES
-            (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    ");
+    $has_fs = bookcopies_has_file_size($pdo);
+    if ($has_fs) {
+        $ins = $pdo->prepare("
+            INSERT INTO BookCopies
+                (book_id, format, quantity, physical_location, file_path, file_size, notes, created_at, updated_at)
+            VALUES
+                (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ");
+    } else {
+        $ins = $pdo->prepare("
+            INSERT INTO BookCopies
+                (book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at)
+            VALUES
+                (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ");
+    }
 
     foreach ($norm as $copy) {
-        $ins->execute([
+        $params = [
             $book_id,
             $copy['format'],
             $copy['quantity'],
             $copy['physical_location'],
             $copy['file_path'],
-            $copy['notes'],
-        ]);
+        ];
+        if ($has_fs) $params[] = $copy['file_size'];
+        $params[] = $copy['notes'];
+        $ins->execute($params);
     }
 
     return fetch_book_copies($pdo, $book_id);

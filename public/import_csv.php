@@ -529,6 +529,7 @@ try {
                         isset($shelf_no) ? $shelf_no : null
                     ),
                     'file_path' => null,
+                    'file_size' => 0,
                     'notes' => null,
                 ]];
             }
@@ -766,6 +767,7 @@ try {
             }
 
             $pdo->commit();
+
             $inserted++;
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {

@@ -22,16 +22,6 @@ function ebook_norm(?string $value): string {
     return trim($value);
 }
 
-function ebook_detect_format(string $name, string $kind): ?string {
-    $kind = strtolower(ebook_norm($kind));
-    $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
-
-    foreach (EBOOK_SUPPORTED_FORMATS as $format) {
-        if ($kind === $format || str_contains($kind, $format)) return $format;
-    }
-    if (in_array($ext, EBOOK_SUPPORTED_FORMATS, true)) return $ext;
-    return null;
-}
 
 function ebook_parse_authors(string $author_part): array {
     $authors = [];
@@ -61,6 +51,22 @@ function ebook_extract_metadata_blocks(string $value): array {
     return [ebook_norm((string)$clean), array_values(array_filter($blocks, static fn (string $v): bool => $v !== ''))];
 }
 
+function ebook_extract_language_tag(string $value): array {
+    if (preg_match('/^(.*?)\s*\[([a-z]{2,3})\]\s*$/isu', $value, $m)) {
+        return [ebook_norm((string)$m[1]), strtolower((string)$m[2])];
+    }
+    return [$value, null];
+}
+
+function ebook_language_from_path(string $path): ?string {
+    foreach (explode('/', str_replace('\\', '/', $path)) as $segment) {
+        if (preg_match('/^\d+_([A-Z]{2,3})$/i', $segment, $m)) {
+            return strtolower((string)$m[1]);
+        }
+    }
+    return null;
+}
+
 function ebook_apply_metadata_blocks(array $blocks, array &$authors): array {
     $series = [];
     $aliases = [];
@@ -83,15 +89,15 @@ function ebook_apply_metadata_blocks(array $blocks, array &$authors): array {
     ];
 }
 
-function ebook_parse_row(string $name, string $path, string $kind): array {
+function ebook_parse_row(string $name, string $path, int $file_size): array {
     $name = ebook_norm($name);
     $path = ebook_norm($path);
-    $kind = ebook_norm($kind);
 
-    $format = ebook_detect_format($name, $kind);
-    if ($format === null) {
-        throw new RuntimeException("Unsupported format for '{$name}' (kind='{$kind}')");
+    $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+    if (!in_array($ext, EBOOK_SUPPORTED_FORMATS, true)) {
+        throw new RuntimeException("Unsupported format '{$ext}' for '{$name}'");
     }
+    $format = $ext;
 
     $basename = preg_replace('/\.[^.]+$/u', '', $name) ?? $name;
     $parts = preg_split('/\s[-–—]\s/u', $basename) ?: [];
@@ -104,8 +110,11 @@ function ebook_parse_row(string $name, string $path, string $kind): array {
     $subtitle = $parts ? ebook_norm(implode(' - ', $parts)) : '';
     $authors = ebook_parse_authors((string)$author_part);
     [$title, $title_blocks] = ebook_extract_metadata_blocks($title);
+    [$title, $title_lang]   = ebook_extract_language_tag($title);
     [$subtitle, $subtitle_blocks] = ebook_extract_metadata_blocks($subtitle);
+    [$subtitle, $subtitle_lang]   = ebook_extract_language_tag($subtitle);
     $metadata = ebook_apply_metadata_blocks(array_merge($title_blocks, $subtitle_blocks), $authors);
+    $language = $title_lang ?? $subtitle_lang ?? ebook_language_from_path($path) ?? 'unknown';
 
     if (!$authors) {
         throw new RuntimeException("No authors parsed for '{$name}'");
@@ -121,8 +130,10 @@ function ebook_parse_row(string $name, string $path, string $kind): array {
         'title' => $title,
         'subtitle' => $subtitle !== '' ? $subtitle : null,
         'series' => $metadata['series'] !== '' ? $metadata['series'] : null,
+        'language' => $language,
         'format' => $format,
         'file_path' => $path,
+        'file_size' => $file_size,
         'raw_name' => $name,
     ];
 }
@@ -151,48 +162,79 @@ if (!is_string($output_path) || $output_path === '') {
     exit(1);
 }
 
-$in = fopen($resolved_input, 'rb');
-if ($in === false) {
-    fwrite(STDERR, "Failed to open input file.\n");
+$raw = file_get_contents($resolved_input);
+if ($raw === false) {
+    fwrite(STDERR, "Failed to read input file.\n");
     exit(1);
 }
 
-$header = fgetcsv($in, 0, "\t");
-if (!is_array($header)) {
-    fclose($in);
-    fwrite(STDERR, "Input file is empty.\n");
-    exit(1);
+// Strip UTF-8 BOM if present
+if (strncmp($raw, "\xEF\xBB\xBF", 3) === 0) {
+    $raw = substr($raw, 3);
 }
 
-$header = array_map(static fn ($value): string => ebook_norm((string)$value), $header);
-$required = ['Name', 'Path', 'Kind'];
-if ($header !== $required) {
-    fclose($in);
-    fwrite(STDERR, "Unexpected header. Expected tab-delimited: Name, Path, Kind\n");
-    fwrite(STDERR, "Actual header: " . implode(' | ', $header) . "\n");
+// Normalize line endings (\r\n and \r-only → \n)
+$raw = str_replace("\r\n", "\n", $raw);
+$raw = str_replace("\r", "\n", $raw);
+
+$lines = explode("\n", $raw);
+unset($raw);
+
+// Scan for the header row (NeoFinder may prefix the export with metadata lines)
+$col_name = false;
+$col_path = false;
+$col_size = false;
+$header_line_no = 0;
+$data_start = 0;
+
+foreach ($lines as $i => $line) {
+    $header_line_no = $i + 1;
+    $fields = str_getcsv($line, "\t");
+    $header = array_map(static fn ($value): string => ebook_norm((string)$value), $fields);
+    $col_name = array_search('Name', $header, true);
+    $col_path = array_search('Path', $header, true);
+    $col_size = array_search('Size', $header, true);
+
+    if ($col_name !== false && $col_path !== false && $col_size !== false) {
+        $data_start = $i + 1;
+        break;
+    }
+    $col_name = false;
+    $col_path = false;
+    $col_size = false;
+}
+
+if ($col_name === false || $col_path === false || $col_size === false) {
+    fwrite(STDERR, "Could not find a header row with Name, Path, Size columns (scanned {$header_line_no} lines).\n");
     exit(1);
 }
 
 $groups = [];
 $warnings = [];
-$line_no = 1;
+$line_no = $data_start;
 $source_rows = 0;
 
-while (($row = fgetcsv($in, 0, "\t")) !== false) {
+foreach (array_slice($lines, $data_start) as $line) {
     $line_no++;
-    if ($row === [null] || $row === false) continue;
+    if (trim($line) === '') continue;
+    $row = str_getcsv($line, "\t");
     $source_rows++;
 
-    $name = ebook_norm($row[0] ?? '');
-    $path = ebook_norm($row[1] ?? '');
-    $kind = ebook_norm($row[2] ?? '');
-    if ($name === '' || $path === '' || $kind === '') {
-        $warnings[] = "Line {$line_no}: missing Name/Path/Kind";
+    $name = ebook_norm($row[$col_name] ?? '');
+    $path = ebook_norm($row[$col_path] ?? '');
+    $file_size = max(0, (int)($row[$col_size] ?? 0));
+    if ($name === '' || $path === '') {
+        $warnings[] = "Line {$line_no}: missing Name/Path";
+        continue;
+    }
+
+    // Skip folder entries (no file extension)
+    if (strtolower(pathinfo($name, PATHINFO_EXTENSION)) === '') {
         continue;
     }
 
     try {
-        $parsed = ebook_parse_row($name, $path, $kind);
+        $parsed = ebook_parse_row($name, $path, $file_size);
     } catch (Throwable $e) {
         $warnings[] = "Line {$line_no}: " . $e->getMessage();
         continue;
@@ -206,7 +248,7 @@ while (($row = fgetcsv($in, 0, "\t")) !== false) {
             'series' => $parsed['series'],
             'authors_csv' => $parsed['authors_csv'],
             'authors_metadata_json' => $parsed['authors_metadata_json'],
-            'language' => 'unknown',
+            'language' => $parsed['language'],
             'copies' => [],
         ];
     }
@@ -216,6 +258,7 @@ while (($row = fgetcsv($in, 0, "\t")) !== false) {
         'quantity' => 1,
         'physical_location' => null,
         'file_path' => $parsed['file_path'],
+        'file_size' => $parsed['file_size'],
         'notes' => null,
     ];
 
@@ -233,7 +276,7 @@ while (($row = fgetcsv($in, 0, "\t")) !== false) {
 
     $groups[$key]['copies'][] = $copy;
 }
-fclose($in);
+unset($lines);
 
 $out = fopen($output_path, 'wb');
 if ($out === false) {
@@ -283,6 +326,7 @@ fclose($out);
 $summary = [
     'input' => $resolved_input,
     'output' => $output_path,
+    'header_line' => $header_line_no,
     'source_rows' => $source_rows,
     'grouped_books' => count($groups),
     'copy_rows' => array_sum(array_map(static fn (array $group): int => count($group['copies']), $groups)),
