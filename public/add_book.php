@@ -231,6 +231,9 @@ try {
         // Only rollback if the TX is actually open
         $pdo->rollBack();
     }
+    if ($e instanceof InvalidArgumentException) {
+        json_fail($e->getMessage(), 400);
+    }
     $code = (int)$e->getCode();
     if ($code >= 400 && $code < 600) {
         json_fail($e->getMessage(), $code);

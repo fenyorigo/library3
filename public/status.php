@@ -33,6 +33,7 @@ try {
             'schema_version' => $schema_version,
             'systeminfo' => $systeminfo,
             'version_match' => $version_match,
+            'unicode_path_warnings' => unicode_path_runtime_warnings(),
         ],
     ]);
 } catch (Throwable $e) {

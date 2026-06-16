@@ -36,19 +36,27 @@ try {
     }
 
     $pdo->beginTransaction();
-    $upd = $pdo->prepare("
-        UPDATE BookCopies
-        SET format = ?, quantity = ?, physical_location = ?, file_path = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE copy_id = ?
-    ");
-    $upd->execute([
+    $sets = ['format = ?', 'quantity = ?', 'physical_location = ?', 'file_path = ?'];
+    $params = [
         $copy['format'],
         $copy['quantity'],
         $copy['physical_location'],
         $copy['file_path'],
-        $copy['notes'],
-        $copy_id,
-    ]);
+    ];
+    if (bookcopies_has_file_size($pdo)) {
+        $sets[] = 'file_size = ?';
+        $params[] = $copy['file_size'];
+    }
+    if (bookcopies_has_sha256($pdo)) {
+        $sets[] = 'sha256 = ?';
+        $params[] = $copy['sha256'];
+    }
+    $sets[] = 'notes = ?';
+    $sets[] = 'updated_at = CURRENT_TIMESTAMP';
+    $params[] = $copy['notes'];
+    $params[] = $copy_id;
+    $upd = $pdo->prepare('UPDATE BookCopies SET ' . implode(', ', $sets) . ' WHERE copy_id = ?');
+    $upd->execute($params);
 
     $sync = sync_book_copy_derived_fields($pdo, $book_id);
     $pdo->commit();
@@ -65,5 +73,6 @@ try {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {
         $pdo->rollBack();
     }
-    json_fail($e->getMessage(), 500);
+    $code = $e instanceof InvalidArgumentException ? 400 : 500;
+    json_fail($e->getMessage(), $code);
 }

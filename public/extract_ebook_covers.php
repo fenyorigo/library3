@@ -226,7 +226,8 @@ try {
             foreach ($rows as $row) {
                 $processed++;
                 $book_id = (int)$row['book_id'];
-                $fp = $row['epub_path'] ?? $row['pdf_path'] ?? null;
+                $fp_stored = $row['epub_path'] ?? $row['pdf_path'] ?? null;
+                $fp = $fp_stored ? resolveFilesystemPath((string)$fp_stored) : null;
                 if (!$fp || !file_exists($fp)) { $skipped++; continue; }
 
                 $tmp_cover = null;

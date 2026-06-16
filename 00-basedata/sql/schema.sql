@@ -11,8 +11,8 @@
 /*M!100616 SET @OLD_NOTE_VERBOSITY=@@NOTE_VERBOSITY, NOTE_VERBOSITY=0 */;
 /* BookCatalog schema baseline*/;
 /*  DB: books3 */;
-/*  version: 3.1.1 */;
-/*  generated: 2026-06-15 */;
+/*  version: 3.3.0 */;
+/*  generated: 2026-06-16 */;
 DROP TABLE IF EXISTS `AuthEvents`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;
@@ -58,12 +58,14 @@ CREATE TABLE `BookCopies` (
   `physical_location` varchar(255) DEFAULT NULL,
   `file_path` varchar(1024) DEFAULT NULL,
   `file_size` bigint(20) unsigned NOT NULL DEFAULT 0,
+  `sha256` char(64) DEFAULT NULL,
   `notes` text DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `updated_at` datetime DEFAULT NULL,
   PRIMARY KEY (`copy_id`),
   KEY `idx_bookcopies_book` (`book_id`),
   KEY `idx_bookcopies_format` (`format`),
+  KEY `idx_bookcopies_sha256` (`sha256`),
   CONSTRAINT `fk_bookcopies_book` FOREIGN KEY (`book_id`) REFERENCES `Books` (`book_id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -153,6 +155,20 @@ CREATE TABLE `Subjects` (
   UNIQUE KEY `uniq_subjects_name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `Settings`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `Settings` (
+  `setting_key` varchar(100) NOT NULL,
+  `setting_value` text DEFAULT NULL,
+  `description` text DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+INSERT INTO `Settings` (`setting_key`, `setting_value`, `description`) VALUES
+('ebook_library_root', '/Volumes/SanDisk 2T', 'Absolute path to the mounted ebook library root');
 DROP TABLE IF EXISTS `SystemInfo`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;

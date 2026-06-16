@@ -244,7 +244,7 @@
                 </select>
                 <input v-model.number="copy.quantity" type="number" min="1" placeholder="Qty" />
                 <input v-model.trim="copy.physical_location" :disabled="copy.format !== 'print'" placeholder="Physical location" />
-                <input v-model.trim="copy.file_path" :disabled="copy.format === 'print'" placeholder="/path/to/file" />
+                <input v-model.trim="copy.file_path" :disabled="copy.format === 'print'" placeholder="/Books/..." />
                 <span class="ro copy-size">{{ formatFileSize(copy.file_size) }}</span>
                 <input v-model.trim="copy.notes" placeholder="Notes" />
                 <button type="button" class="ghost small-btn" @click="removeCopyRow(idx)">Delete</button>
@@ -391,6 +391,7 @@ const normalizeCopy = (copy = {}) => ({
   physical_location: copy.physical_location || "",
   file_path: copy.file_path || "",
   file_size: Number(copy.file_size || 0),
+  sha256: copy.sha256 || null,
   notes: copy.notes || "",
 });
 
@@ -892,6 +893,7 @@ const save = () => {
       : ((copy.physical_location || "").trim() || null),
     file_path: copy.format === "print" ? null : ((copy.file_path || "").trim() || null),
     file_size: copy.format === "print" ? 0 : Number(copy.file_size || 0),
+    sha256: copy.format === "print" ? null : ((copy.sha256 || "").trim() || null),
     notes: (copy.notes || "").trim() || null,
   }));
   if (!payload.copies.length) {
@@ -900,6 +902,8 @@ const save = () => {
       quantity: 1,
       physical_location: physicalFromPlacement || null,
       file_path: null,
+      file_size: 0,
+      sha256: null,
       notes: null,
     }];
   }

@@ -534,6 +534,28 @@ try {
                 ]];
             }
 
+            foreach ($copies_in as $copy_idx => &$copy_in) {
+                if (!is_array($copy_in)) continue;
+                $copy_format = normalize_book_copy_format($copy_in['format'] ?? null);
+                if ($copy_format === 'print') {
+                    $copy_in['file_path'] = null;
+                    continue;
+                }
+                try {
+                    $copy_in['file_path'] = normalize_book_copy_file_path($copy_in['file_path'] ?? null);
+                } catch (InvalidArgumentException $e) {
+                    $copy_in['file_path'] = null;
+                    $push_warning($warnings, $total, 'Copy #' . ($copy_idx + 1) . ' file_path ignored: ' . $e->getMessage());
+                }
+                try {
+                    $copy_in['sha256'] = normalize_book_copy_sha256($copy_in['sha256'] ?? null);
+                } catch (InvalidArgumentException $e) {
+                    $copy_in['sha256'] = null;
+                    $push_warning($warnings, $total, 'Copy #' . ($copy_idx + 1) . ' sha256 ignored: ' . $e->getMessage());
+                }
+            }
+            unset($copy_in);
+
             $cover_image_rel = N($data['cover_image'] ?? null);
             $cover_thumb_rel = N($data['cover_thumb'] ?? null);
             if ($cover_thumb_rel === null) {

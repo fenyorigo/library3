@@ -36,20 +36,27 @@ try {
     $copy = normalize_book_copy_input($in);
     $pdo->beginTransaction();
 
-    $ins = $pdo->prepare("
-        INSERT INTO BookCopies
-            (book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at)
-        VALUES
-            (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    ");
-    $ins->execute([
+    $has_fs = bookcopies_has_file_size($pdo);
+    $has_sha = bookcopies_has_sha256($pdo);
+    $columns = ['book_id', 'format', 'quantity', 'physical_location', 'file_path'];
+    if ($has_fs) $columns[] = 'file_size';
+    if ($has_sha) $columns[] = 'sha256';
+    $columns[] = 'notes';
+    $columns[] = 'created_at';
+    $columns[] = 'updated_at';
+    $placeholders = implode(', ', array_fill(0, count($columns) - 2, '?')) . ', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP';
+    $ins = $pdo->prepare('INSERT INTO BookCopies (' . implode(', ', $columns) . ') VALUES (' . $placeholders . ')');
+    $params = [
         $book_id,
         $copy['format'],
         $copy['quantity'],
         $copy['physical_location'],
         $copy['file_path'],
-        $copy['notes'],
-    ]);
+    ];
+    if ($has_fs) $params[] = $copy['file_size'];
+    if ($has_sha) $params[] = $copy['sha256'];
+    $params[] = $copy['notes'];
+    $ins->execute($params);
 
     $sync = sync_book_copy_derived_fields($pdo, $book_id);
     $pdo->commit();
@@ -66,5 +73,6 @@ try {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {
         $pdo->rollBack();
     }
-    json_fail($e->getMessage(), 500);
+    $code = $e instanceof InvalidArgumentException ? 400 : 500;
+    json_fail($e->getMessage(), $code);
 }

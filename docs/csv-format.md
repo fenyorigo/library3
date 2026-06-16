@@ -106,8 +106,9 @@ Each element of the `copies_json` array is a copy object:
   "format": "epub",
   "quantity": 1,
   "physical_location": null,
-  "file_path": "/Volumes/Books/Author - Title.epub",
+  "file_path": "/Books/0_HU/Author - Title.epub",
   "file_size": 73335,
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "notes": null
 }
 ```
@@ -117,9 +118,16 @@ Each element of the `copies_json` array is a copy object:
 | `format`            | string          | `print`, `epub`, `mobi`, `azw3`, `pdf`, `djvu`, `lit`, `prc`, `rtf`, `odt` |
 | `quantity`          | integer         | Number of physical copies (typically 1). |
 | `physical_location` | string \| null  | Free-text shelf location. |
-| `file_path`         | string \| null  | Absolute path to the ebook file; null for print. |
+| `file_path`         | string \| null  | POSIX path relative to `Settings.ebook_library_root`, normally starting with `/Books/`; null for print. Absolute paths under the configured mount point are accepted on import and stored as `/Books/...`. |
 | `file_size`         | integer         | File size in bytes. 0 for print copies or when unknown. Displayed in MB in the UI. |
+| `sha256`            | string \| null  | Optional lowercase 64-character SHA256 checksum for the physical ebook file content. Import accepts uppercase/lowercase hex and stores lowercase. Null for print copies or when not calculated yet. |
 | `notes`             | string \| null  | Per-copy notes. |
+
+
+`sha256` identifies the physical ebook file content, not the bibliographic work. Changing EPUB metadata, embedded cover images, OPF structure, or other packaging details changes the checksum even when the visible book text is the same. Normal CSV import stores the supplied checksum but does not calculate a missing checksum.
+
+The configured ebook library root is the mounted SSD root (for example `/Volumes/SanDisk 2T` on macOS), not the `Books` directory itself. The stored copy path keeps the stable `/Books/...` suffix so switching to another mounted SSD only requires changing the global setting.
+BookCatalog canonicalizes stored paths to NFC and removes NBSP/zero-width filename pollution on import. CSV export always writes the canonical database path, not the APFS/NFD filesystem-native spelling.
 
 If `copies_json` is empty or absent on import, the importer falls back to creating a single
 print copy using `copy_count` and the `bookcase`/`shelf` placement.

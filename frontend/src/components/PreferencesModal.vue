@@ -154,6 +154,18 @@
           </div>
         </div>
 
+        <div v-if="isAdmin" class="row admin-row">
+          <label class="label">Ebook mount point</label>
+          <input
+            v-model.trim="settingsForm.ebook_library_root"
+            class="wide-input"
+            type="text"
+            placeholder="/Volumes/SanDisk 2T"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+
         <ChangePassword />
       </section>
 
@@ -167,13 +179,14 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { updateUserPreferences, assetUrl } from "../api";
+import { updateUserPreferences, fetchSettings, updateSettings, assetUrl } from "../api";
 import ChangePassword from "./ChangePassword.vue";
 
 const emit = defineEmits(["close", "saved"]);
 
 const props = defineProps({
   preferences: { type: Object, default: () => ({}) },
+  isAdmin: { type: Boolean, default: false },
 });
 
 const loading = ref(false);
@@ -203,6 +216,9 @@ const form = ref({
   show_notes: false,
 });
 
+const settingsForm = ref({
+  ebook_library_root: "",
+});
 const objectUrl = ref("");
 const autofillTimers = ref<number[]>([]);
 const cleanHex = (value: unknown) => {
@@ -221,6 +237,13 @@ const logoPreview = computed(() => {
   const raw = props.preferences?.logo_url;
   return raw ? assetUrl(raw) : "";
 });
+
+const loadSettings = async () => {
+  if (!props.isAdmin) return;
+  const res = await fetchSettings();
+  const settings = res?.data?.settings || {};
+  settingsForm.value.ebook_library_root = settings.ebook_library_root || "";
+};
 
 watch(
   () => props.preferences,
@@ -265,6 +288,10 @@ onMounted(() => {
   };
   autofillTimers.value.push(window.setTimeout(scrub, 0));
   autofillTimers.value.push(window.setTimeout(scrub, 250));
+  loadSettings().catch((err) => {
+    const msg = err instanceof Error ? err.message : "";
+    alert(msg || "Settings load failed.");
+  });
 });
 
 onBeforeUnmount(() => {
@@ -316,6 +343,9 @@ const save = async () => {
       show_subjects: form.value.show_subjects,
       show_notes: form.value.show_notes,
     };
+    if (props.isAdmin) {
+      await updateSettings({ ebook_library_root: settingsForm.value.ebook_library_root });
+    }
     const res = await updateUserPreferences(payload, logoFile.value);
     const prefs = res?.data?.preferences || null;
     if (prefs) emit("saved", prefs);
@@ -339,6 +369,8 @@ const save = async () => {
 .label { font-weight: 600; }
 .color-row { display:flex; gap:.6rem; align-items:center; }
 .color-row input[type="text"] { width: 140px; }
+.wide-input { width: 100%; min-width: 0; }
+.admin-row { align-items: center; }
 .logo-row { display:flex; gap:.75rem; align-items:center; flex-wrap: wrap; }
 .logo-preview img { max-height: 80px; border: 1px solid var(--btn-border); border-radius: 6px; padding: 4px; background: #fff; }
 .inline { display:flex; align-items:center; gap:.35rem; }

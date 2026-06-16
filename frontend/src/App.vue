@@ -73,6 +73,9 @@
         <button v-if="isAdmin" @click="openCsvImport">Import books</button>
         <button v-if="isAdmin" @click="onRebuildThumbs">Rebuild thumbs</button>
         <button v-if="isAdmin" @click="onExtractEbookCovers">Extract ebook covers</button>
+        <button v-if="isAdmin" @click="onBuildEbookSha256">Build missing SHA256 checksums</button>
+        <button v-if="isAdmin" @click="onIncrementalEbookRescan">Incremental ebook repository rescan</button>
+        <button v-if="isAdmin" @click="onFullEbookIntegrityCheck">Full ebook integrity check</button>
         <button
           v-if="isAdmin"
           class="link-btn"
@@ -166,6 +169,7 @@
     <PreferencesModal
       v-if="showPreferences"
       :preferences="preferences"
+      :is-admin="isAdmin"
       @close="showPreferences = false"
       @saved="onPreferencesSaved"
     />
@@ -188,6 +192,42 @@
           Extracting ebook covers…
           <span v-if="extractCoversTotal"> {{ extractCoversDone }} / {{ extractCoversTotal }} ({{ extractCoversExtracted }} extracted)</span>
           <span v-else> {{ extractCoversDone }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="sha256Busy" class="busy-overlay" aria-live="polite">
+      <div class="busy-card busy-card-wide">
+        <div class="spinner" aria-hidden="true"></div>
+        <div>
+          <div>Building ebook SHA256 checksums...</div>
+          <div v-if="sha256Total">{{ sha256Processed }} / {{ sha256Total }} processed, {{ sha256Updated }} updated</div>
+          <div v-else>{{ sha256Processed }} processed, {{ sha256Updated }} updated</div>
+          <div class="busy-subline">Missing {{ sha256Missing }}, unreadable {{ sha256Unreadable }}, errors {{ sha256Errors }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="rescanBusy" class="busy-overlay" aria-live="polite">
+      <div class="busy-card busy-card-wide">
+        <div class="spinner" aria-hidden="true"></div>
+        <div>
+          <div>Scanning ebook repository...</div>
+          <div v-if="rescanTotal">{{ rescanProcessed }} / {{ rescanTotal }} files</div>
+          <div v-else>Preparing scan...</div>
+          <div class="busy-subline">New {{ rescanCounters.new_file_candidate || 0 }}, path changes {{ rescanCounters.same_sha_path_changed || 0 }}, changed {{ rescanCounters.same_path_different_sha || 0 }}, missing {{ rescanCounters.missing_on_disk || 0 }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="integrityBusy" class="busy-overlay" aria-live="polite">
+      <div class="busy-card busy-card-wide">
+        <div class="spinner" aria-hidden="true"></div>
+        <div>
+          <div>Checking ebook copy integrity...</div>
+          <div v-if="integrityTotal">{{ integrityChecked }} / {{ integrityTotal }} copies</div>
+          <div v-else>Preparing check...</div>
+          <div class="busy-subline">OK {{ integrityCounters.ok || 0 }}, missing {{ integrityCounters.missing_on_disk || 0 }}, SHA mismatch {{ integrityCounters.sha_mismatch || 0 }}</div>
         </div>
       </div>
     </div>
@@ -273,6 +313,7 @@ import {
   assetUrl,
   bumpAssetCacheVersion,
   apiUrl,
+  csrfHeader,
 } from "./api";
 import { useAuth } from "./composables/useAuth";
 import { APP_VERSION_DISPLAY } from "./version";
@@ -312,6 +353,24 @@ const extractCoversBusy = ref(false);
 const extractCoversDone = ref(0);
 const extractCoversTotal = ref(0);
 const extractCoversExtracted = ref(0);
+const sha256Busy = ref(false);
+const sha256Total = ref(0);
+const sha256Processed = ref(0);
+const sha256Updated = ref(0);
+const sha256Missing = ref(0);
+const sha256Unreadable = ref(0);
+const sha256Errors = ref(0);
+const sha256Report = ref([]);
+const rescanBusy = ref(false);
+const rescanProcessed = ref(0);
+const rescanTotal = ref(0);
+const rescanCounters = ref({});
+const rescanResults = ref({});
+const integrityBusy = ref(false);
+const integrityChecked = ref(0);
+const integrityTotal = ref(0);
+const integrityCounters = ref({});
+const integrityResults = ref({});
 const backupBusy = ref(false);
 const backupBusyMessage = ref("");
 const purgeBusy = ref(false);
@@ -1194,6 +1253,327 @@ const onExtractEbookCovers = async () => {
   }
 };
 
+const onBuildEbookSha256 = async () => {
+  if (!ensureAdmin()) return;
+  try {
+    const checkUrl = apiUrl("build_ebook_sha256.php?check=1");
+    const checkRes = await fetch(checkUrl, { credentials: "same-origin" });
+    const checkJson = await checkRes.json().catch(() => ({}));
+    if (!checkRes.ok || checkJson.ok === false) throw new Error(checkJson.error || "SHA256 check failed");
+    const info = checkJson?.data || {};
+    const root = info.ebook_library_root || "";
+    const missing = Number(info.missing_sha256 || 0);
+    if (missing <= 0) {
+      alert(`No missing SHA256 checksums.\nRoot: ${root}`);
+      return;
+    }
+    if (!confirm(`Build missing SHA256 checksums now?\n\nRoot: ${root}\nMissing checksums: ${missing}`)) return;
+
+    sha256Busy.value = true;
+    sha256Total.value = missing;
+    sha256Processed.value = 0;
+    sha256Updated.value = 0;
+    sha256Missing.value = 0;
+    sha256Unreadable.value = 0;
+    sha256Errors.value = 0;
+    sha256Report.value = [];
+
+    const batchSize = 25;
+    let afterCopyId = 0;
+    let remaining = missing;
+    while (true) {
+      const res = await fetch(apiUrl("build_ebook_sha256.php"), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...csrfHeader(),
+        },
+        body: JSON.stringify({ limit: batchSize, after_copy_id: afterCopyId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.ok === false) throw new Error(json.error || "SHA256 build failed");
+      const payload = json?.data || {};
+      const processed = Number(payload.processed || 0);
+      sha256Processed.value += processed;
+      sha256Updated.value += Number(payload.updated || 0);
+      sha256Missing.value += Number(payload.missing || 0);
+      sha256Unreadable.value += Number(payload.unreadable || 0);
+      sha256Errors.value += Number(payload.errors || 0);
+      remaining = Number(payload.remaining || 0);
+      afterCopyId = Number(payload.next_after_copy_id || afterCopyId);
+      if (Array.isArray(payload.report)) {
+        sha256Report.value.push(...payload.report.filter((item) => item.status !== "updated"));
+        if (sha256Report.value.length > 100) sha256Report.value = sha256Report.value.slice(0, 100);
+      }
+
+      if (payload.done || processed <= 0) break;
+    }
+
+    let msg = [
+      "SHA256 build completed.",
+      `Initial missing: ${sha256Total.value}`,
+      `Processed: ${sha256Processed.value}`,
+      `Updated: ${sha256Updated.value}`,
+      `Missing files: ${sha256Missing.value}`,
+      `Unreadable files: ${sha256Unreadable.value}`,
+      `Errors: ${sha256Errors.value}`,
+      `Remaining NULL SHA256: ${remaining}`,
+    ].join("\n");
+    if (sha256Report.value.length) {
+      const lines = sha256Report.value.slice(0, 15).map((item) => `#${item.copy_id} ${item.status}: ${item.file_path}${item.error ? ` (${item.error})` : ""}`);
+      const more = sha256Report.value.length > 15 ? `\n...and ${sha256Report.value.length - 15} more` : "";
+      msg += `\n\nProblem report:\n- ${lines.join("\n- ")}${more}`;
+    }
+    alert(msg);
+  } catch (err) {
+    alert(err && err.message ? err.message : "SHA256 build failed.");
+  } finally {
+    sha256Busy.value = false;
+  }
+};
+
+const rescanPost = async (payload) => {
+  const res = await fetch(apiUrl("rescan_ebook_repository.php"), {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      ...csrfHeader(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.ok === false) throw new Error(json.error || "Repository rescan failed");
+  return json.data || {};
+};
+
+const mergeRescanResults = (items = []) => {
+  for (const item of items) {
+    const status = item.status || "errors";
+    if (!Array.isArray(rescanResults.value[status])) rescanResults.value[status] = [];
+    rescanResults.value[status].push(item);
+    if (rescanResults.value[status].length > 200) rescanResults.value[status] = rescanResults.value[status].slice(0, 200);
+  }
+};
+
+const rescanSummaryText = () => {
+  const c = rescanCounters.value || {};
+  const lines = [
+    "Incremental ebook rescan completed.",
+    `Scanned files: ${rescanProcessed.value}`,
+    `Unchanged: ${c.unchanged || 0}`,
+    `Same SHA path changed: ${c.same_sha_path_changed || 0}`,
+    `New file candidates: ${c.new_file_candidate || 0}`,
+    `Same path, different SHA: ${c.same_path_different_sha || 0}`,
+    `Duplicate SHA in database: ${c.duplicate_sha_in_database || 0}`,
+    `Duplicate file on disk: ${c.duplicate_file_on_disk || 0}`,
+    `Missing on disk: ${c.missing_on_disk || 0}`,
+    `Errors: ${c.errors || 0}`,
+  ];
+  for (const group of ["same_sha_path_changed", "new_file_candidate", "same_path_different_sha", "duplicate_sha_in_database", "duplicate_file_on_disk", "missing_on_disk", "errors"]) {
+    const items = rescanResults.value[group] || [];
+    if (!items.length) continue;
+    lines.push("", `${group}:`);
+    for (const item of items.slice(0, 8)) {
+      lines.push(`- ${item.copy_id ? `#${item.copy_id} ` : ""}${item.old_file_path ? `${item.old_file_path} -> ${item.new_file_path}` : (item.file_path || item.absolute_path || item.error || "")}`);
+    }
+    if (items.length > 8) lines.push(`...and ${items.length - 8} more`);
+  }
+  return lines.join("\n");
+};
+
+const onIncrementalEbookRescan = async () => {
+  if (!ensureAdmin()) return;
+  try {
+    const infoRes = await fetch(apiUrl("rescan_ebook_repository.php"), { credentials: "same-origin" });
+    const infoJson = await infoRes.json().catch(() => ({}));
+    if (!infoRes.ok || infoJson.ok === false) throw new Error(infoJson.error || "Repository rescan check failed");
+    const info = infoJson.data || {};
+    if (!confirm(`Run incremental ebook repository rescan?\n\nRoot: ${info.scan_root || ""}`)) return;
+
+    rescanBusy.value = true;
+    rescanProcessed.value = 0;
+    rescanTotal.value = 0;
+    rescanCounters.value = {};
+    rescanResults.value = {};
+
+    const start = await rescanPost({ action: "start" });
+    const token = start.token;
+    rescanTotal.value = Number(start.total_files || 0);
+    rescanCounters.value = start.counters || {};
+
+    const batchSize = 20;
+    while (true) {
+      const payload = await rescanPost({ action: "next", token, limit: batchSize });
+      rescanProcessed.value = Number(payload.offset || rescanProcessed.value);
+      rescanTotal.value = Number(payload.total_files || rescanTotal.value);
+      rescanCounters.value = payload.counters || rescanCounters.value;
+      mergeRescanResults(payload.results || []);
+      if (payload.done || Number(payload.processed || 0) <= 0) break;
+    }
+
+    alert(rescanSummaryText());
+
+    const newCandidates = rescanResults.value.new_file_candidate || [];
+    if (newCandidates.length && confirm(`Export ${newCandidates.length} new file candidate(s) to an import CSV now?\n\nThe CSV can be imported with Import books; it includes the catalog path, file size, and SHA256.`)) {
+      const exported = await rescanPost({ action: "export_new_candidates_csv", token, items: newCandidates });
+      if (exported.csv) downloadIntegrityCsv(exported.filename || "ebook_new_candidates.csv", exported.csv);
+      const warnings = exported.warnings || [];
+      alert(`New candidate CSV rows: ${exported.rows || 0}${warnings.length ? `\nWarnings: ${warnings.length}` : ""}`);
+    }
+
+    if ((rescanCounters.value.duplicate_file_on_disk || 0) > 0 && confirm(`Download duplicate files on disk CSV report?\n\nDuplicates are grouped by identical SHA256 content.`)) {
+      const exported = await rescanPost({ action: "export_duplicate_files_csv", token });
+      if (exported.csv) downloadIntegrityCsv(exported.filename || "ebook_duplicate_files.csv", exported.csv);
+      alert(`Duplicate SHA groups: ${exported.groups || 0}\nCSV rows: ${exported.rows || 0}`);
+    }
+
+    const moved = rescanResults.value.same_sha_path_changed || [];
+    if (moved.length && confirm(`Apply ${moved.length} same-SHA path change updates now?\n\nThis only updates BookCopies.file_path, not bibliographic metadata.`)) {
+      const applied = await rescanPost({ action: "apply_path_updates", token, items: moved });
+      alert(`Path updates applied: ${applied.updated || 0}`);
+    }
+
+    const changed = rescanResults.value.same_path_different_sha || [];
+    if (changed.length && confirm(`Apply ${changed.length} same-path SHA/file_size updates now?\n\nUse only if these are intentional file content changes.`)) {
+      const applied = await rescanPost({ action: "apply_sha_updates", token, items: changed });
+      alert(`SHA updates applied: ${applied.updated || 0}`);
+    }
+  } catch (err) {
+    alert(err && err.message ? err.message : "Repository rescan failed.");
+  } finally {
+    rescanBusy.value = false;
+  }
+};
+
+const integrityPost = async (payload) => {
+  const res = await fetch(apiUrl("check_ebook_integrity.php"), {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      ...csrfHeader(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.ok === false) throw new Error(json.error || "Integrity check failed");
+  return json.data || {};
+};
+
+const mergeIntegrityResults = (items = []) => {
+  for (const item of items) {
+    const status = item.status || "errors";
+    if (!Array.isArray(integrityResults.value[status])) integrityResults.value[status] = [];
+    integrityResults.value[status].push(item);
+    if (integrityResults.value[status].length > 300) integrityResults.value[status] = integrityResults.value[status].slice(0, 300);
+  }
+};
+
+const integritySummaryText = () => {
+  const c = integrityCounters.value || {};
+  const lines = [
+    "Full ebook integrity check completed.",
+    `Checked: ${integrityChecked.value}`,
+    `OK: ${c.ok || 0}`,
+    `SHA missing: ${c.sha_missing || 0}`,
+    `Missing on disk: ${c.missing_on_disk || 0}`,
+    `SHA mismatch: ${c.sha_mismatch || 0}`,
+    `OK SHA, size mismatch: ${c.ok_sha_size_mismatch || 0}`,
+    `Errors: ${c.errors || 0}`,
+  ];
+  for (const group of ["sha_missing", "missing_on_disk", "sha_mismatch", "ok_sha_size_mismatch", "errors"]) {
+    const items = integrityResults.value[group] || [];
+    if (!items.length) continue;
+    lines.push("", `${group}:`);
+    for (const item of items.slice(0, 8)) {
+      lines.push(`- ${item.copy_id ? `#${item.copy_id} ` : ""}${item.file_path || item.error || ""}`);
+    }
+    if (items.length > 8) lines.push(`...and ${items.length - 8} more`);
+  }
+  return lines.join("\n");
+};
+
+const downloadIntegrityCsv = (filename, csv) => {
+  const blob = new Blob([csv || ""], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "ebook_integrity_report.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
+const onFullEbookIntegrityCheck = async () => {
+  if (!ensureAdmin()) return;
+  try {
+    const infoRes = await fetch(apiUrl("check_ebook_integrity.php"), { credentials: "same-origin" });
+    const infoJson = await infoRes.json().catch(() => ({}));
+    if (!infoRes.ok || infoJson.ok === false) throw new Error(infoJson.error || "Integrity check setup failed");
+    const info = infoJson.data || {};
+    if (!confirm(`Run full ebook integrity check?\n\nRoot: ${info.scan_root || ""}\nCopies to check: ${info.total_copies || 0}`)) return;
+
+    integrityBusy.value = true;
+    integrityChecked.value = 0;
+    integrityTotal.value = 0;
+    integrityCounters.value = {};
+    integrityResults.value = {};
+
+    const start = await integrityPost({ action: "start" });
+    const token = start.token;
+    integrityTotal.value = Number(start.total_copies || 0);
+    integrityCounters.value = start.counters || {};
+
+    const batchSize = 25;
+    while (true) {
+      const payload = await integrityPost({ action: "next", token, limit: batchSize });
+      integrityChecked.value = Number(payload.checked || integrityChecked.value);
+      integrityTotal.value = Number(payload.total_copies || integrityTotal.value);
+      integrityCounters.value = payload.counters || integrityCounters.value;
+      mergeIntegrityResults(payload.results || []);
+      if (payload.done || Number(payload.processed || 0) <= 0) break;
+    }
+
+    alert(integritySummaryText());
+
+    const missingSha = integrityResults.value.sha_missing || [];
+    if (missingSha.length && confirm(`Populate ${missingSha.length} missing SHA256 values now?`)) {
+      const applied = await integrityPost({ action: "populate_missing_sha", token, items: missingSha });
+      alert(`SHA values populated: ${applied.updated || 0}`);
+    }
+
+    const sizeMismatch = integrityResults.value.ok_sha_size_mismatch || [];
+    if (sizeMismatch.length && confirm(`Refresh file_size for ${sizeMismatch.length} OK-SHA rows now?`)) {
+      const applied = await integrityPost({ action: "refresh_file_size", token, items: sizeMismatch });
+      alert(`File sizes refreshed: ${applied.updated || 0}`);
+    }
+
+    const shaMismatch = integrityResults.value.sha_mismatch || [];
+    if (shaMismatch.length && confirm(`Update SHA256/file_size for ${shaMismatch.length} mismatched rows now?\n\nUse only after confirming these are intentional file content changes.`)) {
+      const applied = await integrityPost({ action: "update_mismatched_sha", token, items: shaMismatch });
+      alert(`Mismatched SHA rows updated: ${applied.updated || 0}`);
+    }
+
+    const missingDisk = integrityResults.value.missing_on_disk || [];
+    if (missingDisk.length && confirm(`Mark ${missingDisk.length} missing-on-disk copies as unavailable in notes?\n\nThis does not delete records.`)) {
+      const applied = await integrityPost({ action: "mark_missing_unavailable", token, items: missingDisk });
+      alert(`Missing copies marked in notes: ${applied.updated || 0}`);
+    }
+
+    if (confirm("Download integrity report CSV?")) {
+      const exported = await integrityPost({ action: "export_csv", token });
+      downloadIntegrityCsv(exported.filename, exported.csv);
+    }
+  } catch (err) {
+    alert(err && err.message ? err.message : "Integrity check failed.");
+  } finally {
+    integrityBusy.value = false;
+  }
+};
+
 onMounted(async () => {
   applyUrlParams();
   await initAuth();
@@ -1452,6 +1832,8 @@ button.ghost,
   box-shadow: 0 12px 30px rgba(0,0,0,0.2);
   border: 1px solid rgba(0,0,0,0.1);
 }
+.busy-card-wide { min-width: min(520px, 92vw); }
+.busy-subline { margin-top: 0.25rem; font-size: 0.88rem; color: #555; }
 
 .spinner {
   width: 18px;

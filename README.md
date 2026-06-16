@@ -145,7 +145,7 @@ Multiple files with the same author(s) + title + subtitle + series are grouped i
 
 - A v3-compatible CSV importable via **Import books → CSV only**.
 - Language is set from filename tags or path segment; falls back to `unknown` (import-time title heuristics then apply).
-- `copies_json` column carries all copy rows (format, file_path, file_size) for the record.
+- `copies_json` column carries all copy rows (format, file_path, file_size, sha256) for the record.
 - `authors_metadata_json` carries structured author data including aliases.
 - ID, Year, ISBN, Publisher, Subjects columns are left empty — fill in manually after import if needed.
 
@@ -168,10 +168,36 @@ Current state:
 
 - core v3 catalog model is implemented
 - ebook import pipeline is working
+- admin-triggered initial SHA256 checksum build is available for known ebook copies
+- ebook paths are stored as canonical NFC logical paths and resolved against macOS/APFS NFD filenames at file access time
+- incremental ebook repository rescan uses SHA256 to detect new, moved, renamed, missing, and changed files without re-importing unchanged records
+- full ebook integrity check verifies every known ebook copy from DB to filesystem and reports missing files, SHA gaps, content mismatches, and size drift
 - soft delete and restore are implemented
 - NeoFinder conversion tooling is included
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.3.0**  
-Current schema version: **3.1.1**
+Current application version: **3.4.0**  
+Current schema version: **3.3.0**
+
+## Unicode Path Handling
+
+BookCatalog stores ebook copy paths as canonical NFC logical paths under `/Books/...`. On macOS/APFS, the filesystem may report filenames in decomposed/NFD Unicode form even when Finder displays the same visual name. For file access, BookCatalog first tries the exact path and then compares entries in the expected parent directory after canonicalizing both database and filesystem names.
+
+PHP `intl` / `Normalizer` is required for reliable Unicode path handling. Do not force NFC filenames on disk from the application; keep the database canonical and let the resolver map to the filesystem-native path.
+
+## Incremental Ebook Rescan
+
+The admin rescan tool scans `ebook_library_root + /Books`, calculates SHA256 for discovered ebook files, and compares results with `BookCopies.sha256`. Matching SHA values identify the same physical file content: if the scanned path differs from `BookCopies.file_path`, the file is reported as `same_sha_path_changed` and treated as a path update candidate, not a new import. Same-path files with different SHA are reported as content changes because EPUB metadata, cover, OPF/package changes, OCR fixes, or replacement files all change the physical checksum.
+
+The rescan reports new file candidates, same-SHA path changes, same-path different-SHA cases, duplicate SHA values in the database, duplicate files on disk, missing files, and errors. New file candidates can be exported as an `Import books` CSV with parsed metadata, `/Books/...` path, file size, and SHA256. Duplicate files on disk can be exported as a SHA-grouped CSV report. Applying path updates or same-path SHA/file-size updates requires explicit admin confirmation; the tool does not create new bibliographic records directly and does not delete or soft-delete missing files.
+
+## Ebook Integrity Tools
+
+BookCatalog has three separate ebook maintenance actions:
+
+- **Initial SHA build** fills missing `BookCopies.sha256` values for known ebook copies only.
+- **Incremental repository rescan** is the repository-to-database check: it answers "what changed in the filesystem?" It scans `ebook_library_root + /Books` and uses SHA256 to detect new files, moved/renamed files, duplicates, missing files, and same-path content changes without re-importing unchanged records. This is where repair decisions happen: exporting new file candidates as an import CSV, updating paths when the SHA is unchanged, and explicitly accepting same-path SHA/file-size updates when file content changes are intentional.
+- **Full ebook integrity check** is the database-to-repository validation: it answers "does what the catalog claims still exist on disk, and does it still match?" It starts from database copies and verifies that each known ebook still resolves on disk and matches its stored SHA256. It reports missing files, `sha256` gaps, SHA mismatches, OK-SHA file-size mismatches, and errors. After incremental repairs, a full integrity check should ideally finish with all copies OK.
+
+SHA256 identifies physical file content. EPUB cover, metadata, OPF/package, OCR/text fixes, corruption, or file replacement can all change the checksum even when bibliographic metadata should remain unchanged.

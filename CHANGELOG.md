@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.4.0 - 2026-06-16
+
+- Added global `Settings.ebook_library_root` admin setting for the mounted ebook SSD root, for example `/Volumes/SanDisk 2T`.
+- Changed ebook copy path storage: `BookCopies.file_path` now stores stable `/Books/...` POSIX paths instead of per-machine `/Volumes/...` absolute paths.
+- CSV import accepts absolute NeoFinder paths under the configured mount point and stores them as `/Books/...`; paths outside the configured root are warned/rejected instead of being stored silently.
+- Ebook cover extraction now resolves physical files from `ebook_library_root + BookCopies.file_path`.
+- Added `BookCopies.sha256` with `idx_bookcopies_sha256`; CSV import/export now round-trips optional copy-level SHA256 checksums.
+- Added admin batch action to build missing SHA256 checksums for existing ebook copies, with progress counters and per-copy problem report.
+- Added Unicode-canonical ebook path handling: BookCatalog stores NFC logical paths and resolves macOS/APFS NFD filenames by canonical parent-directory matching; PHP intl/Normalizer is required.
+- Added admin incremental ebook repository rescan using SHA256 to report unchanged, same-SHA path changes, duplicate files on disk, new file candidates, same-path content changes, duplicate SHA values, missing files, and errors; path/SHA updates require explicit confirmation, new file candidates can be exported as an Import books CSV, and duplicate-on-disk files can be exported as a SHA-grouped CSV report.
+- Added full ebook integrity check for known DB copies: verifies resolved files, SHA256, file_size, missing-on-disk cases, and exports grouped reports; all repair actions require explicit confirmation.
+- Added migrations `v3_add_settings_ebook_library_root.sql` and `v3_add_bookcopy_sha256.sql`; bumped schema version to 3.3.0.
+
 ## 3.3.0 - 2026-06-15
 
 - **Ebook cover extraction** as a separate admin action ("Extract ebook covers" button): polls books with epub/pdf copies that have no cover, extracts covers in batches of 5, shows live progress overlay. epub: ZipArchive + OPF manifest (EPUB3 `cover-image` property, EPUB2 `<meta name="cover">`). PDF: `magick` via `proc_open` with 10 s hard timeout (avoids PHP-FPM hangs from Ghostscript).

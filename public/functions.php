@@ -9,7 +9,7 @@ declare(strict_types=1);
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
 
-const SCHEMA_VERSION = '3.1.1';
+const SCHEMA_VERSION = '3.3.0';
 
 /* --------------------------- Error helpers --------------------------- */
 
@@ -739,6 +739,20 @@ function bookcopies_has_file_size(PDO $pdo): bool {
     return $exists;
 }
 
+function bookcopies_has_sha256(PDO $pdo): bool {
+    static $exists = null;
+    if ($exists !== null) return $exists;
+
+    $st = $pdo->query("
+        SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'BookCopies'
+          AND COLUMN_NAME = 'sha256'
+    ");
+    $exists = (int)$st->fetchColumn() > 0;
+    return $exists;
+}
+
 function books_table_has_language(PDO $pdo): bool {
     static $exists = null;
     if ($exists !== null) return $exists;
@@ -1140,34 +1154,247 @@ function normalize_book_copy_format(?string $format): string {
     return in_array($format, $allowed, true) ? $format : 'print';
 }
 
-function normalize_book_copy_file_path(?string $file_path): ?string {
-    $path = trim((string)$file_path);
-    if ($path === '') return null;
+function getSetting(string $key, $default = null) {
+    $key = trim($key);
+    if ($key === '') return $default;
 
-    if (str_starts_with($path, 'file://')) {
-        $url_path = parse_url($path, PHP_URL_PATH);
+    try {
+        $st = pdo()->prepare('SELECT setting_value FROM Settings WHERE setting_key = ? LIMIT 1');
+        $st->execute([$key]);
+        $value = $st->fetchColumn();
+        return $value === false ? $default : $value;
+    } catch (Throwable $e) {
+        return $default;
+    }
+}
+
+function setSetting(string $key, $value): void {
+    $key = trim($key);
+    if ($key === '') {
+        throw new InvalidArgumentException('Missing setting key');
+    }
+
+    $st = pdo()->prepare("
+        INSERT INTO Settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON DUPLICATE KEY UPDATE
+          setting_value = VALUES(setting_value),
+          updated_at = CURRENT_TIMESTAMP
+    ");
+    $st->execute([$key, $value === null ? null : (string)$value]);
+}
+
+function unicode_path_normalization_available(): bool {
+    return class_exists('Normalizer');
+}
+
+function unicode_path_runtime_warnings(): array {
+    return unicode_path_normalization_available()
+        ? []
+        : ['PHP intl extension / Normalizer is missing; Unicode path normalization is not reliable.'];
+}
+
+function filesystemPathString(?string $path): ?string {
+    $path = (string)($path ?? '');
+    if (trim($path) === '') return null;
+
+    if (str_starts_with(trim($path), 'file://')) {
+        $url_path = parse_url(trim($path), PHP_URL_PATH);
         if (is_string($url_path) && trim($url_path) !== '') {
-            $path = trim($url_path);
+            $path = $url_path;
         }
     }
 
-    if (str_starts_with($path, '~/')) {
-        $home = getenv('HOME') ?: '';
-        if ($home !== '') {
-            return rtrim($home, '/\\') . '/' . substr($path, 2);
+    $path = str_replace('\\', '/', $path);
+    $path = preg_replace('#/+#', '/', $path) ?? $path;
+    return $path;
+}
+
+function canonicalPathString(?string $path): ?string {
+    $path = filesystemPathString($path);
+    if ($path === null) return null;
+
+    $path = str_replace("\u{00A0}", ' ', $path);
+    $path = str_replace(["\u{200B}", "\u{200C}", "\u{200D}", "\u{FEFF}", "\u{2060}"], '', $path);
+    $path = preg_replace('/ {2,}/u', ' ', $path) ?? $path;
+    $path = trim($path);
+
+    if (unicode_path_normalization_available()) {
+        $normalized = Normalizer::normalize($path, Normalizer::FORM_C);
+        if (is_string($normalized)) {
+            $path = $normalized;
         }
+    }
+
+    return $path === '' ? null : $path;
+}
+
+function normalize_posix_path_value(?string $path): ?string {
+    return canonicalPathString($path);
+}
+
+function normalizeEbookLibraryRoot(string $path): string {
+    $normalized = normalize_posix_path_value($path) ?? '';
+    $normalized = rtrim($normalized, '/');
+    if ($normalized === '') {
+        throw new InvalidArgumentException('Ebook library root cannot be empty');
+    }
+    if ($normalized[0] !== '/') {
+        throw new InvalidArgumentException('Ebook library root must be an absolute mount path');
+    }
+    return $normalized;
+}
+
+function getEbookLibraryRoot(): string {
+    return normalizeEbookLibraryRoot((string)getSetting('ebook_library_root', '/Volumes/SanDisk 2T'));
+}
+
+function is_absolute_file_path(string $path): bool {
+    return $path !== '' && ($path[0] === '/' || (bool)preg_match('/^[A-Za-z]:[\\\\\/]/', $path));
+}
+
+function normalize_relative_books_path(string $path): string {
+    $path = normalize_posix_path_value($path) ?? '';
+    if ($path === '') {
+        throw new InvalidArgumentException('Ebook file path cannot be empty');
+    }
+    if (str_starts_with($path, 'Books/')) {
+        $path = '/' . $path;
+    }
+    if ($path !== '/Books' && !str_starts_with($path, '/Books/')) {
+        throw new InvalidArgumentException('Ebook file path must be under /Books');
+    }
+    return $path;
+}
+
+function absoluteToRelativeEbookPath(?string $absolutePath): ?string {
+    $path = normalize_posix_path_value($absolutePath);
+    if ($path === null) return null;
+
+    if ($path === '/Books' || str_starts_with($path, 'Books/') || str_starts_with($path, '/Books/')) {
+        return normalize_relative_books_path($path);
+    }
+
+    if (!is_absolute_file_path($path)) {
+        return normalize_relative_books_path($path);
+    }
+
+    $root = getEbookLibraryRoot();
+    if ($path === $root) {
+        throw new InvalidArgumentException('Ebook file path points to the mount root, not a file under /Books');
+    }
+    if (!str_starts_with($path, $root . '/')) {
+        throw new InvalidArgumentException('Ebook file path is outside the configured ebook library root');
+    }
+
+    return normalize_relative_books_path(substr($path, strlen($root)));
+}
+
+function relativeToAbsoluteEbookPath(?string $relativePath): ?string {
+    $path = normalize_posix_path_value($relativePath);
+    if ($path === null) return null;
+
+    $root = getEbookLibraryRoot();
+    if (str_starts_with($path, $root . '/')) {
         return $path;
     }
-
-    $is_windows_drive = (bool)preg_match('/^[A-Za-z]:[\\\\\\/]/', $path);
-    if (!$is_windows_drive && strpos($path, ':') !== false && strpos($path, '/') === false && strpos($path, '\\') === false) {
-        $parts = array_values(array_filter(array_map('trim', explode(':', $path)), static fn (string $part): bool => $part !== ''));
-        if ($parts) {
-            return '/Volumes/' . implode('/', $parts);
-        }
+    if (str_starts_with($path, 'Books/')) {
+        $path = '/' . $path;
+    }
+    if ($path === '/Books' || str_starts_with($path, '/Books/')) {
+        return rtrim($root, '/') . $path;
     }
 
     return $path;
+}
+
+function normalize_book_copy_file_path(?string $file_path): ?string {
+    return absoluteToRelativeEbookPath($file_path);
+}
+
+function resolveFilesystemPath(string $storedPath): ?string {
+    $stored = normalize_book_copy_file_path($storedPath);
+    if ($stored === null) return null;
+    $intended = relativeToAbsoluteEbookPath($stored);
+    if ($intended === null) return null;
+    if (is_file($intended)) return $intended;
+
+    $dir = dirname($intended);
+    if (!is_dir($dir) || !is_readable($dir)) return null;
+
+    $target = canonicalPathString(basename($stored));
+    if ($target === null) return null;
+    foreach (@scandir($dir) ?: [] as $entry) {
+        if ($entry === '.' || $entry === '..') continue;
+        if (canonicalPathString($entry) === $target) {
+            $actual = rtrim($dir, '/') . '/' . $entry;
+            return is_file($actual) ? $actual : null;
+        }
+    }
+    return null;
+}
+
+function diagnoseFilesystemPath(string $storedPath): array {
+    $stored = normalize_book_copy_file_path($storedPath);
+    $intended = $stored !== null ? relativeToAbsoluteEbookPath($stored) : null;
+    $resolved = $stored !== null ? resolveFilesystemPath($stored) : null;
+    $status = 'missing';
+    if ($resolved !== null && $intended !== null && $resolved === $intended) {
+        $status = 'exact_match';
+    } elseif ($resolved !== null) {
+        $status = 'canonical_match';
+    }
+    return [
+        'stored_path' => $stored,
+        'intended_absolute_path' => $intended,
+        'resolved_absolute_path' => $resolved,
+        'status' => $status,
+    ];
+}
+
+function normalize_book_copy_sha256($sha256): ?string {
+    $sha256 = trim((string)($sha256 ?? ''));
+    if ($sha256 === '') return null;
+    if (!preg_match('/^[A-Fa-f0-9]{64}$/', $sha256)) {
+        throw new InvalidArgumentException('Book copy sha256 must be exactly 64 hex characters');
+    }
+    return strtolower($sha256);
+}
+
+function calculateFileSha256(string $absolutePath): ?string {
+    $path = filesystemPathString($absolutePath);
+    if ($path === null || !is_file($path) || !is_readable($path)) {
+        return null;
+    }
+    $hash = @hash_file('sha256', $path);
+    if (!is_string($hash) || !preg_match('/^[a-f0-9]{64}$/', $hash)) {
+        return null;
+    }
+    return strtolower($hash);
+}
+
+function calculateBookCopySha256(array|int $copy): ?string {
+    if (is_int($copy)) {
+        if ($copy <= 0) return null;
+        $pdo = pdo();
+        if (!bookcopies_table_exists($pdo)) return null;
+        $st = $pdo->prepare('SELECT format, file_path FROM BookCopies WHERE copy_id = ? LIMIT 1');
+        $st->execute([$copy]);
+        $copy = $st->fetch(PDO::FETCH_ASSOC) ?: [];
+    }
+
+    if (!$copy || normalize_book_copy_format($copy['format'] ?? null) === 'print') {
+        return null;
+    }
+    try {
+        $relative = normalize_book_copy_file_path($copy['file_path'] ?? null);
+    } catch (InvalidArgumentException $e) {
+        return null;
+    }
+    if ($relative === null) return null;
+
+    $actual = resolveFilesystemPath($relative);
+    return $actual === null ? null : calculateFileSha256($actual);
 }
 
 function format_physical_location_from_placement(?int $bookcase_no, ?int $shelf_no): ?string {
@@ -1206,6 +1433,7 @@ function normalize_book_copy_input(array $copy, int $index = 0): array {
         'physical_location' => N($copy['physical_location'] ?? null),
         'file_path' => $format === 'print' ? null : normalize_book_copy_file_path($copy['file_path'] ?? null),
         'file_size' => $format === 'print' ? 0 : max(0, (int)($copy['file_size'] ?? 0)),
+        'sha256' => $format === 'print' ? null : normalize_book_copy_sha256($copy['sha256'] ?? null),
         'notes' => N($copy['notes'] ?? null),
         '_index' => $index,
     ];
@@ -1216,9 +1444,10 @@ function fetch_book_copies_map(PDO $pdo, array $book_ids): array {
     if (!$book_ids || !bookcopies_table_exists($pdo)) return [];
 
     $placeholders = implode(',', array_fill(0, count($book_ids), '?'));
-    $fs_col = bookcopies_has_file_size($pdo) ? ', file_size' : '';
+    $fs_col = bookcopies_has_file_size($pdo) ? ', file_size' : ', 0 AS file_size';
+    $sha_col = bookcopies_has_sha256($pdo) ? ', sha256' : ', NULL AS sha256';
     $st = $pdo->prepare("
-        SELECT copy_id, book_id, format, quantity, physical_location, file_path{$fs_col}, notes, created_at, updated_at
+        SELECT copy_id, book_id, format, quantity, physical_location, file_path{$fs_col}{$sha_col}, notes, created_at, updated_at
         FROM BookCopies
         WHERE book_id IN ($placeholders)
         ORDER BY book_id ASC, FIELD(format, 'print', 'epub', 'mobi', 'azw3', 'pdf', 'djvu', 'lit', 'prc', 'rtf', 'odt'), copy_id ASC
@@ -1271,50 +1500,8 @@ function find_first_print_copy(array $copies): ?array {
 }
 
 function book_copy_file_path_exists(?string $file_path): bool {
-    $path = trim((string)$file_path);
-    if ($path === '') return false;
-
-    $candidates = [$path];
-
-    if (str_starts_with($path, 'file://')) {
-        $url_path = parse_url($path, PHP_URL_PATH);
-        if (is_string($url_path) && $url_path !== '') {
-            $candidates[] = $url_path;
-        }
-    }
-
-    if (str_starts_with($path, '~/')) {
-        $home = getenv('HOME') ?: '';
-        if ($home !== '') {
-            $candidates[] = rtrim($home, '/\\') . '/' . substr($path, 2);
-        }
-    }
-
-    if ($path[0] === '/' || preg_match('/^[A-Za-z]:[\\\\\\/]/', $path)) {
-        $candidates[] = $path;
-    } elseif (strpos($path, ':') !== false && strpos($path, '/') === false && strpos($path, '\\') === false) {
-        $parts = array_values(array_filter(array_map('trim', explode(':', $path)), static fn (string $part): bool => $part !== ''));
-        if ($parts) {
-            $joined = implode('/', $parts);
-            $candidates[] = '/' . $joined;
-            if (count($parts) >= 2) {
-                $candidates[] = '/Volumes/' . $joined;
-            }
-        }
-    } else {
-        $rel = ltrim(str_replace('\\', '/', $path), '/');
-        $candidates[] = dirname(__DIR__) . '/' . $rel;
-        $candidates[] = __DIR__ . '/' . $rel;
-    }
-
-    $seen = [];
-    foreach ($candidates as $candidate) {
-        $candidate = trim((string)$candidate);
-        if ($candidate === '' || isset($seen[$candidate])) continue;
-        $seen[$candidate] = true;
-        if (is_file($candidate)) return true;
-    }
-    return false;
+    if ($file_path === null) return false;
+    return resolveFilesystemPath((string)$file_path) !== null;
 }
 
 function has_restorable_ebook_copy(array $copies): bool {
@@ -1408,21 +1595,15 @@ function replace_book_copies(PDO $pdo, int $book_id, array $copies): array {
     $del->execute([$book_id]);
 
     $has_fs = bookcopies_has_file_size($pdo);
-    if ($has_fs) {
-        $ins = $pdo->prepare("
-            INSERT INTO BookCopies
-                (book_id, format, quantity, physical_location, file_path, file_size, notes, created_at, updated_at)
-            VALUES
-                (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ");
-    } else {
-        $ins = $pdo->prepare("
-            INSERT INTO BookCopies
-                (book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at)
-            VALUES
-                (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ");
-    }
+    $has_sha = bookcopies_has_sha256($pdo);
+    $columns = ['book_id', 'format', 'quantity', 'physical_location', 'file_path'];
+    if ($has_fs) $columns[] = 'file_size';
+    if ($has_sha) $columns[] = 'sha256';
+    $columns[] = 'notes';
+    $columns[] = 'created_at';
+    $columns[] = 'updated_at';
+    $placeholders = implode(', ', array_fill(0, count($columns) - 2, '?')) . ', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP';
+    $ins = $pdo->prepare('INSERT INTO BookCopies (' . implode(', ', $columns) . ') VALUES (' . $placeholders . ')');
 
     foreach ($norm as $copy) {
         $params = [
@@ -1433,6 +1614,7 @@ function replace_book_copies(PDO $pdo, int $book_id, array $copies): array {
             $copy['file_path'],
         ];
         if ($has_fs) $params[] = $copy['file_size'];
+        if ($has_sha) $params[] = $copy['sha256'];
         $params[] = $copy['notes'];
         $ins->execute($params);
     }

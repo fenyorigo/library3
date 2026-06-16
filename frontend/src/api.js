@@ -394,6 +394,21 @@ export async function fetchUserPreferences() {
   return parseJsonResponse(res);
 }
 
+export async function fetchSettings() {
+  const res = await apiFetch(apiUrl("settings.php"), { credentials: "same-origin" });
+  return parseJsonResponse(res);
+}
+
+export async function updateSettings(payload = {}) {
+  const res = await apiFetch(apiUrl("settings.php"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(payload),
+  });
+  return parseJsonResponse(res);
+}
+
 /* -------------------- MAINTENANCE -------------------- */
 
 export async function fetchOrphanMaintenance() {

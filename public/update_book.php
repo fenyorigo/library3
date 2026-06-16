@@ -252,5 +252,6 @@ try {
     if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {
         $pdo->rollBack();
     }
-    json_fail($e->getMessage(), 500);
+    $code = $e instanceof InvalidArgumentException ? 400 : 500;
+    json_fail($e->getMessage(), $code);
 }

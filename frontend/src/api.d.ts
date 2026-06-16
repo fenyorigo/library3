@@ -19,6 +19,8 @@ export function logout(): Promise<any>;
 export function me(): Promise<any>;
 export function updateUserPreferences(payload?: Record<string, unknown>, logoFile?: File | null): Promise<any>;
 export function fetchUserPreferences(): Promise<any>;
+export function fetchSettings(): Promise<any>;
+export function updateSettings(payload?: Record<string, unknown>): Promise<any>;
 export function fetchOrphanMaintenance(): Promise<any>;
 export function deleteOrphanAuthor(authorId: number): Promise<any>;
 export function deleteOrphanPublisher(publisherId: number): Promise<any>;

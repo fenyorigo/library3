@@ -340,30 +340,43 @@ try {
             }
         }
 
+        $has_fs = bookcopies_has_file_size($pdo);
+        $has_sha = bookcopies_has_sha256($pdo);
+        $copy_select_cols = 'format, quantity, physical_location, file_path'
+            . ($has_fs ? ', file_size' : ', 0 AS file_size')
+            . ($has_sha ? ', sha256' : ', NULL AS sha256')
+            . ', notes';
         $dup_copy_stmt = $pdo->prepare("
-            SELECT format, quantity, physical_location, file_path, notes
+            SELECT {$copy_select_cols}
             FROM BookCopies
             WHERE book_id = ?
             ORDER BY copy_id ASC
         ");
-        $ins_copy = $pdo->prepare("
-            INSERT INTO BookCopies (book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-        ");
+        $copy_cols = ['book_id', 'format', 'quantity', 'physical_location', 'file_path'];
+        if ($has_fs) $copy_cols[] = 'file_size';
+        if ($has_sha) $copy_cols[] = 'sha256';
+        $copy_cols[] = 'notes';
+        $copy_cols[] = 'created_at';
+        $copy_cols[] = 'updated_at';
+        $copy_placeholders = implode(', ', array_fill(0, count($copy_cols) - 2, '?')) . ', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP';
+        $ins_copy = $pdo->prepare('INSERT INTO BookCopies (' . implode(', ', $copy_cols) . ') VALUES (' . $copy_placeholders . ')');
         foreach ($dup_ids as $dup_id) {
             $dup_copy_stmt->execute([$dup_id]);
             foreach ($dup_copy_stmt->fetchAll(PDO::FETCH_ASSOC) as $copy) {
                 if (($copy['format'] ?? '') === 'print') {
                     continue;
                 }
-                $ins_copy->execute([
+                $params = [
                     $master_id,
                     normalize_book_copy_format($copy['format'] ?? null),
                     max(1, (int)($copy['quantity'] ?? 1)),
                     N($copy['physical_location'] ?? null),
                     N($copy['file_path'] ?? null),
-                    N($copy['notes'] ?? null),
-                ]);
+                ];
+                if ($has_fs) $params[] = max(0, (int)($copy['file_size'] ?? 0));
+                if ($has_sha) $params[] = normalize_book_copy_sha256($copy['sha256'] ?? null);
+                $params[] = N($copy['notes'] ?? null);
+                $ins_copy->execute($params);
             }
         }
     }

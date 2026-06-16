@@ -88,9 +88,15 @@ try {
     $authors = $pdo->query("SELECT author_id, first_name, last_name, sort_name FROM Authors ORDER BY author_id")->fetchAll(PDO::FETCH_ASSOC);
     $publishers = $pdo->query("SELECT publisher_id, name FROM Publishers ORDER BY publisher_id")->fetchAll(PDO::FETCH_ASSOC);
     $subjects = $pdo->query("SELECT subject_id, name FROM Subjects ORDER BY subject_id")->fetchAll(PDO::FETCH_ASSOC);
-    $book_copies = bookcopies_table_exists($pdo)
-        ? $pdo->query("SELECT copy_id, book_id, format, quantity, physical_location, file_path, notes, created_at, updated_at FROM BookCopies ORDER BY book_id, copy_id")->fetchAll(PDO::FETCH_ASSOC)
-        : [];
+    if (bookcopies_table_exists($pdo)) {
+        $book_copies_cols = 'copy_id, book_id, format, quantity, physical_location, file_path'
+            . (bookcopies_has_file_size($pdo) ? ', file_size' : ', 0 AS file_size')
+            . (bookcopies_has_sha256($pdo) ? ', sha256' : ', NULL AS sha256')
+            . ', notes, created_at, updated_at';
+        $book_copies = $pdo->query("SELECT {$book_copies_cols} FROM BookCopies ORDER BY book_id, copy_id")->fetchAll(PDO::FETCH_ASSOC);
+    } else {
+        $book_copies = [];
+    }
     $books_authors_cols = books_authors_has_author_alias($pdo)
         ? 'book_id, author_id, author_ord, author_alias'
         : 'book_id, author_id, author_ord, NULL AS author_alias';
@@ -142,7 +148,7 @@ $csv_books_path       = write_csv($csv_books_rows, $csv_books_header);
 $csv_authors_path     = write_csv($authors,      ['author_id','first_name','last_name','sort_name']);
 $csv_publishers_path  = write_csv($publishers,   ['publisher_id','name']);
 $csv_subjects_path    = write_csv($subjects,     ['subject_id','name']);
-$csv_bookcopies_path  = write_csv($book_copies,  ['copy_id','book_id','format','quantity','physical_location','file_path','notes','created_at','updated_at']);
+$csv_bookcopies_path  = write_csv($book_copies,  ['copy_id','book_id','format','quantity','physical_location','file_path','file_size','sha256','notes','created_at','updated_at']);
 $csv_ba_path          = write_csv($books_authors, ['book_id','author_id','author_ord','author_alias']);
 $csv_bs_path          = write_csv($books_subjects,['book_id','subject_id']);
 
