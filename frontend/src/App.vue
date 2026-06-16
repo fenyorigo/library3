@@ -215,7 +215,7 @@
           <div>Scanning ebook repository...</div>
           <div v-if="rescanTotal">{{ rescanProcessed }} / {{ rescanTotal }} files</div>
           <div v-else>Preparing scan...</div>
-          <div class="busy-subline">New {{ rescanCounters.new_file_candidate || 0 }}, path changes {{ rescanCounters.same_sha_path_changed || 0 }}, changed {{ rescanCounters.same_path_different_sha || 0 }}, missing {{ rescanCounters.missing_on_disk || 0 }}</div>
+          <div class="busy-subline">New {{ rescanCounters.new_file_candidate || 0 }}, path changes {{ rescanCounters.same_sha_path_changed || 0 }}, metadata {{ rescanCounters.filename_metadata_mismatch || 0 }}, changed {{ rescanCounters.same_path_different_sha || 0 }}, missing {{ rescanCounters.missing_on_disk || 0 }}</div>
         </div>
       </div>
     </div>
@@ -1364,6 +1364,7 @@ const rescanSummaryText = () => {
     `Scanned files: ${rescanProcessed.value}`,
     `Unchanged: ${c.unchanged || 0}`,
     `Same SHA path changed: ${c.same_sha_path_changed || 0}`,
+    `Filename metadata mismatch: ${c.filename_metadata_mismatch || 0}`,
     `New file candidates: ${c.new_file_candidate || 0}`,
     `Same path, different SHA: ${c.same_path_different_sha || 0}`,
     `Duplicate SHA in database: ${c.duplicate_sha_in_database || 0}`,
@@ -1371,7 +1372,7 @@ const rescanSummaryText = () => {
     `Missing on disk: ${c.missing_on_disk || 0}`,
     `Errors: ${c.errors || 0}`,
   ];
-  for (const group of ["same_sha_path_changed", "new_file_candidate", "same_path_different_sha", "duplicate_sha_in_database", "duplicate_file_on_disk", "missing_on_disk", "errors"]) {
+  for (const group of ["same_sha_path_changed", "filename_metadata_mismatch", "new_file_candidate", "same_path_different_sha", "duplicate_sha_in_database", "duplicate_file_on_disk", "missing_on_disk", "errors"]) {
     const items = rescanResults.value[group] || [];
     if (!items.length) continue;
     lines.push("", `${group}:`);
@@ -1433,6 +1434,21 @@ const onIncrementalEbookRescan = async () => {
     if (moved.length && confirm(`Apply ${moved.length} same-SHA path change updates now?\n\nThis only updates BookCopies.file_path, not bibliographic metadata.`)) {
       const applied = await rescanPost({ action: "apply_path_updates", token, items: moved });
       alert(`Path updates applied: ${applied.updated || 0}`);
+    }
+
+    const metadataMap = new Map();
+    for (const item of rescanResults.value.filename_metadata_mismatch || []) {
+      metadataMap.set(`${item.book_id || ""}:${item.file_path || item.new_file_path || ""}`, item);
+    }
+    for (const item of moved) {
+      if (!item.metadata_review_recommended || item.metadata_parse_error) continue;
+      metadataMap.set(`${item.book_id || ""}:${item.new_file_path || item.file_path || ""}`, item);
+    }
+    const metadataCandidates = Array.from(metadataMap.values());
+    if (metadataCandidates.length && confirm(`Update title/subtitle/series/language from filename for ${metadataCandidates.length} book(s)?\n\nThis does not update authors, subjects, publisher, cover, or notes.`)) {
+      const applied = await rescanPost({ action: "apply_filename_metadata_updates", token, items: metadataCandidates });
+      const warnings = applied.warnings || [];
+      alert(`Filename metadata rows processed: ${applied.processed || 0}\nBooks changed: ${applied.updated || 0}${warnings.length ? `\nWarnings: ${warnings.length}` : ""}`);
     }
 
     const changed = rescanResults.value.same_path_different_sha || [];

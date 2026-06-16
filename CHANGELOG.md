@@ -10,6 +10,7 @@
 - Added admin batch action to build missing SHA256 checksums for existing ebook copies, with progress counters and per-copy problem report.
 - Added Unicode-canonical ebook path handling: BookCatalog stores NFC logical paths and resolves macOS/APFS NFD filenames by canonical parent-directory matching; PHP intl/Normalizer is required.
 - Added admin incremental ebook repository rescan using SHA256 to report unchanged, same-SHA path changes, duplicate files on disk, new file candidates, same-path content changes, duplicate SHA values, missing files, and errors; path/SHA updates require explicit confirmation, new file candidates can be exported as an Import books CSV, and duplicate-on-disk files can be exported as a SHA-grouped CSV report.
+- Added explicit filename metadata repair in incremental rescan for known ebook files whose parsed filename title/subtitle/series/language no longer matches the catalog record.
 - Added full ebook integrity check for known DB copies: verifies resolved files, SHA256, file_size, missing-on-disk cases, and exports grouped reports; all repair actions require explicit confirmation.
 - Added migrations `v3_add_settings_ebook_library_root.sql` and `v3_add_bookcopy_sha256.sql`; bumped schema version to 3.3.0.
 

@@ -52,7 +52,7 @@ function rescan_cleanup_old(): void {
 }
 
 function rescan_db_indexes(PDO $pdo): array {
-    $rows = $pdo->query("\n        SELECT bc.copy_id, bc.book_id, bc.format, bc.file_path, bc.file_size, bc.sha256, b.title\n        FROM BookCopies bc\n        JOIN Books b ON b.book_id = bc.book_id\n        WHERE bc.file_path IS NOT NULL\n          AND TRIM(bc.file_path) <> ''\n          AND bc.format <> 'print'\n          " . (books_table_has_record_status($pdo) ? "AND b.record_status = 'active'" : '') . "\n        ORDER BY bc.copy_id ASC\n    ")->fetchAll(PDO::FETCH_ASSOC);
+    $rows = $pdo->query("\n        SELECT bc.copy_id, bc.book_id, bc.format, bc.file_path, bc.file_size, bc.sha256,\n               b.title, b.subtitle, b.series, b.language\n        FROM BookCopies bc\n        JOIN Books b ON b.book_id = bc.book_id\n        WHERE bc.file_path IS NOT NULL\n          AND TRIM(bc.file_path) <> ''\n          AND bc.format <> 'print'\n          " . (books_table_has_record_status($pdo) ? "AND b.record_status = 'active'" : '') . "\n        ORDER BY bc.copy_id ASC\n    ")->fetchAll(PDO::FETCH_ASSOC);
 
     $by_path = [];
     $by_sha = [];
@@ -96,6 +96,10 @@ function rescan_store_result(array &$session, string $status, array $item): void
     if (!isset($session['results'][$status])) $session['results'][$status] = [];
     $session['results'][$status][] = $item;
     $session['counters'][$status] = (int)($session['counters'][$status] ?? 0) + 1;
+}
+
+function rescan_metadata_value(?string $value): string {
+    return canonicalPathString($value ?? '') ?? '';
 }
 
 function rescan_scan_files(string $books_root_abs, string $mount_root): array {
@@ -253,6 +257,81 @@ function rescan_parse_new_candidate(array $item): array {
         'language' => $language,
         'copy' => $copy,
     ];
+}
+
+function rescan_filename_metadata_mismatch(array $base, array $copy): ?array {
+    try {
+        $parsed = rescan_parse_new_candidate($base);
+    } catch (Throwable $e) {
+        return null;
+    }
+
+    $parsed_series = $parsed['series'] ?? null;
+    $current_series = $copy['series'] ?? null;
+    // Avoid turning the rescan into a broad title-normalization tool. For already-known files,
+    // only suggest bibliographic updates when explicit filename series metadata is involved.
+    if (rescan_metadata_value($parsed_series) === '' && rescan_metadata_value($current_series) === '') {
+        return null;
+    }
+
+    $checks = [
+        'title' => [$copy['title'] ?? null, $parsed['title'] ?? null],
+        'subtitle' => [$copy['subtitle'] ?? null, $parsed['subtitle'] ?? null],
+        'series' => [$current_series, $parsed_series],
+        'language' => [normalize_book_language($copy['language'] ?? 'unknown'), normalize_book_language($parsed['language'] ?? 'unknown')],
+    ];
+    $differs = false;
+    foreach ($checks as [$current, $next]) {
+        if (rescan_metadata_value($current) !== rescan_metadata_value($next)) {
+            $differs = true;
+            break;
+        }
+    }
+    if (!$differs) return null;
+
+    return $base + [
+        'status' => 'filename_metadata_mismatch',
+        'copy_id' => $copy['copy_id'],
+        'book_id' => $copy['book_id'],
+        'current_title' => $copy['title'] ?? null,
+        'current_subtitle' => $copy['subtitle'] ?? null,
+        'current_series' => $copy['series'] ?? null,
+        'current_language' => $copy['language'] ?? null,
+        'parsed_title' => $parsed['title'] ?? null,
+        'parsed_subtitle' => $parsed['subtitle'] ?? null,
+        'parsed_series' => $parsed['series'] ?? null,
+        'parsed_language' => $parsed['language'] ?? null,
+    ];
+}
+
+function rescan_apply_filename_metadata_updates(PDO $pdo, array $items): array {
+    $updated = 0;
+    $processed = 0;
+    $warnings = [];
+    $st = $pdo->prepare('UPDATE Books SET title = ?, subtitle = ?, series = ?, language = ? WHERE book_id = ?');
+    foreach ($items as $index => $item) {
+        if (!is_array($item)) continue;
+        $book_id = (int)($item['book_id'] ?? 0);
+        $path = normalize_book_copy_file_path($item['new_file_path'] ?? ($item['file_path'] ?? null));
+        if ($book_id <= 0 || $path === null) {
+            $warnings[] = ['index' => $index, 'error' => 'Missing book_id or file_path'];
+            continue;
+        }
+        try {
+            $parsed = rescan_parse_new_candidate(['file_path' => $path, 'format' => pathinfo($path, PATHINFO_EXTENSION)]);
+            $title = N($parsed['title'] ?? null);
+            if ($title === null) throw new RuntimeException('Parsed title is empty');
+            $subtitle = N($parsed['subtitle'] ?? null);
+            $series = N($parsed['series'] ?? null);
+            $language = normalize_book_language($parsed['language'] ?? 'unknown');
+            $st->execute([$title, $subtitle, $series, $language, $book_id]);
+            $processed++;
+            $updated += $st->rowCount();
+        } catch (Throwable $e) {
+            $warnings[] = ['index' => $index, 'file_path' => $path, 'error' => $e->getMessage()];
+        }
+    }
+    return ['processed' => $processed, 'updated' => $updated, 'warnings' => $warnings];
 }
 
 function rescan_candidate_group_key(array $parsed): string {
@@ -414,6 +493,7 @@ try {
             'counters' => [
                 'unchanged' => 0,
                 'same_sha_path_changed' => 0,
+                'filename_metadata_mismatch' => 0,
                 'new_file_candidate' => 0,
                 'same_path_different_sha' => 0,
                 'duplicate_sha_in_database' => 0,
@@ -487,7 +567,13 @@ try {
                     $copy = $path_rows[0];
                     if (($copy['sha256'] ?? null) === $sha) {
                         $item = $base + ['status' => 'unchanged', 'copy_id' => $copy['copy_id'], 'book_id' => $copy['book_id'], 'title' => $copy['title'] ?? null];
-                        rescan_store_result($session, 'unchanged', $item);
+                        $metadata_mismatch = rescan_filename_metadata_mismatch($base, $copy);
+                        if ($metadata_mismatch !== null) {
+                            rescan_store_result($session, 'filename_metadata_mismatch', $metadata_mismatch);
+                            $batch_results[] = $metadata_mismatch;
+                        } else {
+                            rescan_store_result($session, 'unchanged', $item);
+                        }
                     } else {
                         $item = $base + ['status' => 'same_path_different_sha', 'copy_id' => $copy['copy_id'], 'book_id' => $copy['book_id'], 'title' => $copy['title'] ?? null, 'old_sha256' => $copy['sha256'] ?? null, 'new_sha256' => $sha];
                         rescan_store_result($session, 'same_path_different_sha', $item);
@@ -504,6 +590,15 @@ try {
                         'old_file_path' => $copy['file_path'],
                         'new_file_path' => $path,
                     ] + $change;
+                    try {
+                        $parsed = rescan_parse_new_candidate($base);
+                        $item['parsed_title'] = $parsed['title'] ?? null;
+                        $item['parsed_subtitle'] = $parsed['subtitle'] ?? null;
+                        $item['parsed_series'] = $parsed['series'] ?? null;
+                        $item['parsed_language'] = $parsed['language'] ?? null;
+                    } catch (Throwable $e) {
+                        $item['metadata_parse_error'] = $e->getMessage();
+                    }
                     rescan_store_result($session, 'same_sha_path_changed', $item);
                     $batch_results[] = $item;
                 } elseif (count($sha_rows) > 1) {
@@ -586,6 +681,11 @@ try {
             $updated += $st->rowCount();
         }
         json_out(['ok' => true, 'data' => ['updated' => $updated]]);
+    }
+
+    if ($action === 'apply_filename_metadata_updates') {
+        $items = is_array($in['items'] ?? null) ? $in['items'] : ($session['results']['filename_metadata_mismatch'] ?? []);
+        json_out(['ok' => true, 'data' => rescan_apply_filename_metadata_updates($pdo, $items)]);
     }
 
     if ($action === 'export_new_candidates_csv') {
