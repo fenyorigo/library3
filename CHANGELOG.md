@@ -1,11 +1,16 @@
 # Changelog
 
-## 3.5.2 - 2026-06-18
+## 3.5.3 - 2026-06-18
 
 - Added admin **Catalog statistics CSV** export for audit/support workflows. The report follows the current search, record status, format, and language filters and includes summary counts, print and ebook counts, ebook format/language breakdowns, SHA256/path health, and total ebook file size.
 - Documented the statistics export as a validation aid for full, print-only, and ebook-only export/import tests; it is not an import file.
 - Fixed selected export filter propagation so `Export selected books (CSV + covers)` honors the active `Print`, `Ebooks`, specific ebook format, and language filters.
 - Changed server-side full backup to run as an asynchronous background job with UI polling, avoiding gateway timeout errors while large ZIP archives are being generated.
+- Added real cover-file counts to the Catalog statistics CSV export, counting `uploads/<book_id>/cover.*` files separately from `cover-thumb.*` thumbnails.
+- Added optional downloadable CSV reporting for ebook cover extraction runs.
+- Fixed ebook cover extraction batching to use a stable `book_id` cursor instead of `OFFSET`, avoiding skipped candidates when newly extracted covers remove rows from the pending set during the run.
+- Changed server-side selected export ZIP generation to use the same asynchronous background-job/polling flow as full backup, avoiding gateway timeout errors for large full/ebook exports.
+- Changed book import to run as an asynchronous background job with UI polling after upload staging, avoiding gateway timeout errors for large CSV/ZIP imports while preserving the existing import result summary.
 
 ## 3.5.0 - 2026-06-18
 

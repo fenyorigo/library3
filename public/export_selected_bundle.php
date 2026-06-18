@@ -2,8 +2,16 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/functions.php';
-require __DIR__ . '/auth.php';
-require_admin();
+
+$selected_export_cli_job = PHP_SAPI === 'cli' && getenv('BOOKCATALOG_SELECTED_EXPORT_JOB') === '1';
+if ($selected_export_cli_job) {
+    $query_json = getenv('BOOKCATALOG_SELECTED_EXPORT_QUERY');
+    $query = $query_json !== false ? json_decode((string)$query_json, true) : null;
+    if (is_array($query)) $_GET = $query;
+} else {
+    require __DIR__ . '/auth.php';
+    require_admin();
+}
 
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
@@ -15,6 +23,61 @@ ignore_user_abort(true);
 $backup_status = catalog_backup_dir_status();
 $check_mode = isset($_GET['check']) && $_GET['check'] === '1';
 
+function selected_export_job_dir(string $backup_dir): string {
+    $dir = rtrim($backup_dir, "/\\") . '/.bookcatalog_jobs';
+    if (!is_dir($dir)) @mkdir($dir, 0775, true);
+    return $dir;
+}
+
+function selected_export_job_token(): string {
+    return bin2hex(random_bytes(16));
+}
+
+function selected_export_job_path(string $backup_dir, string $token): string {
+    if (!preg_match('/^[a-f0-9]{32}$/', $token)) {
+        throw new InvalidArgumentException('Invalid export job token');
+    }
+    return selected_export_job_dir($backup_dir) . '/selected_export_' . $token . '.json';
+}
+
+function selected_export_write_job(string $path, array $data): void {
+    $data['updated_at'] = date(DateTimeInterface::ATOM);
+    file_put_contents($path, json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
+}
+
+function selected_export_read_job(string $path): array {
+    if (!is_file($path)) throw new RuntimeException('Export job not found');
+    $data = json_decode((string)file_get_contents($path), true);
+    if (!is_array($data)) throw new RuntimeException('Invalid export job status');
+    return $data;
+}
+
+function selected_export_cli_binary(): string {
+    $candidates = [];
+    $bindir = defined('PHP_BINDIR') ? (string)PHP_BINDIR : '';
+    if ($bindir !== '') $candidates[] = rtrim($bindir, '/\\') . '/php';
+    $candidates[] = '/opt/homebrew/bin/php';
+    $candidates[] = '/usr/local/bin/php';
+    $candidates[] = '/usr/bin/php';
+    foreach (array_values(array_unique($candidates)) as $candidate) {
+        if (is_file($candidate) && is_executable($candidate)) return $candidate;
+    }
+    return 'php';
+}
+
+function selected_export_log_error(?string $log_path): ?string {
+    if (!$log_path || !is_file($log_path)) return null;
+    $log = trim((string)file_get_contents($log_path));
+    if ($log === '') return null;
+    if (stripos($log, 'Usage: php-fpm') !== false) {
+        return 'Background job tried to run php-fpm instead of PHP CLI. Please retry with the updated export runner.';
+    }
+    if (stripos($log, 'Fatal error') !== false || stripos($log, 'Parse error') !== false || stripos($log, 'Uncaught') !== false) {
+        return mb_substr($log, 0, 1000, 'UTF-8');
+    }
+    return null;
+}
+
 if ($check_mode) {
     if (!$backup_status['enabled']) {
         json_out(['ok' => true, 'mode' => 'stream']);
@@ -22,7 +85,7 @@ if ($check_mode) {
     if ($backup_status['status'] !== 'ready') {
         json_fail(catalog_backup_dir_error($backup_status), 500);
     }
-    json_out(['ok' => true, 'mode' => 'server', 'dir' => $backup_status['dir']]);
+    json_out(['ok' => true, 'mode' => 'server_async', 'dir' => $backup_status['dir']]);
 }
 
 if ($backup_status['enabled'] && $backup_status['status'] !== 'ready') {
@@ -31,6 +94,74 @@ if ($backup_status['enabled'] && $backup_status['status'] !== 'ready') {
 
 $server_side = $backup_status['enabled'] && $backup_status['status'] === 'ready';
 $backup_dir = $backup_status['dir'] ?? '';
+
+if (!$selected_export_cli_job && $server_side) {
+    $action = (string)($_GET['action'] ?? '');
+    if ($action === 'start_async') {
+        $token = selected_export_job_token();
+        $job_path = selected_export_job_path($backup_dir, $token);
+        $log_path = selected_export_job_dir($backup_dir) . '/selected_export_' . $token . '.log';
+        $query = $_GET;
+        unset($query['action'], $query['check'], $query['token']);
+        selected_export_write_job($job_path, [
+            'ok' => true,
+            'status' => 'running',
+            'token' => $token,
+            'started_at' => date(DateTimeInterface::ATOM),
+            'log_path' => $log_path,
+            'message' => 'Selected export is running on the server.',
+        ]);
+
+        $env_parts = [
+            'BOOKCATALOG_SELECTED_EXPORT_JOB=1',
+            'BOOKCATALOG_SELECTED_EXPORT_STATUS=' . escapeshellarg($job_path),
+            'BOOKCATALOG_SELECTED_EXPORT_QUERY=' . escapeshellarg(json_encode($query, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '{}'),
+        ];
+        $config = getenv('BOOKCATALOG_CONFIG');
+        if ($config !== false && trim((string)$config) !== '') {
+            $env_parts[] = 'BOOKCATALOG_CONFIG=' . escapeshellarg((string)$config);
+        }
+        $catalog_backup_dir = getenv('CATALOG_BACKUP_DIR');
+        if ($catalog_backup_dir !== false && trim((string)$catalog_backup_dir) !== '') {
+            $env_parts[] = 'CATALOG_BACKUP_DIR=' . escapeshellarg((string)$catalog_backup_dir);
+        }
+        $cmd = implode(' ', $env_parts)
+            . ' ' . escapeshellarg(selected_export_cli_binary())
+            . ' ' . escapeshellarg(__FILE__)
+            . ' > ' . escapeshellarg($log_path)
+            . ' 2>&1 &';
+        exec($cmd, $out, $code);
+        if ($code !== 0) {
+            selected_export_write_job($job_path, [
+                'ok' => false,
+                'status' => 'error',
+                'token' => $token,
+                'started_at' => date(DateTimeInterface::ATOM),
+                'error' => 'Failed to start selected export background job.',
+            ]);
+            json_fail('Failed to start selected export background job', 500);
+        }
+        json_out(['ok' => true, 'mode' => 'server_async', 'token' => $token, 'status' => 'running']);
+    }
+
+    if ($action === 'status') {
+        $token = (string)($_GET['token'] ?? '');
+        $job_path = selected_export_job_path($backup_dir, $token);
+        $job = selected_export_read_job($job_path);
+        if (($job['status'] ?? '') === 'running') {
+            $log_path = $job['log_path'] ?? (selected_export_job_dir($backup_dir) . '/selected_export_' . $token . '.log');
+            $log_error = selected_export_log_error($log_path);
+            if ($log_error !== null) {
+                $job['ok'] = false;
+                $job['status'] = 'error';
+                $job['error'] = $log_error;
+                $job['log_path'] = $log_path;
+                selected_export_write_job($job_path, $job);
+            }
+        }
+        json_out(['ok' => true, 'mode' => 'server_async', 'job' => $job]);
+    }
+}
 
 $pdo = pdo();
 
@@ -376,6 +507,19 @@ if ($server_side) {
     }
     clearstatcache(true, $final_path);
     $size_bytes = is_file($final_path) ? (int)filesize($final_path) : 0;
+    $job_status_path = getenv('BOOKCATALOG_SELECTED_EXPORT_STATUS');
+    if ($selected_export_cli_job && $job_status_path !== false && trim((string)$job_status_path) !== '') {
+        selected_export_write_job((string)$job_status_path, [
+            'ok' => true,
+            'status' => 'complete',
+            'completed_at' => date(DateTimeInterface::ATOM),
+            'mode' => 'server',
+            'dir' => $backup_dir,
+            'filename' => $export_name,
+            'path' => $final_path,
+            'size_bytes' => $size_bytes,
+        ]);
+    }
     error_log(sprintf(
         'BookCatalog backup completed: type=%s mode=%s file=%s size=%d bytes',
         'selected_bundle',

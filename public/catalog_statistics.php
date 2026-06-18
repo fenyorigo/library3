@@ -141,6 +141,39 @@ $add('summary', 'ebook_copies_active', $ebook_active, 'Active ebook file rows.')
 $add('summary', 'deleted_records', $deleted_records, 'Current filters applied.');
 $add('summary', 'deleted_copies', $deleted_copy_units, 'Copies attached to deleted bibliographic records.');
 
+$cover_rows = [];
+$st = $pdo->prepare("SELECT b.book_id, b.cover_image {$book_from}");
+$bind($st);
+$st->execute();
+foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $row) {
+    $book_id = (int)($row['book_id'] ?? 0);
+    if ($book_id <= 0) continue;
+    $candidates = [];
+    $cover_image = trim((string)($row['cover_image'] ?? ''));
+    if ($cover_image !== '' && strpos($cover_image, 'uploads/') === 0) {
+        $candidates[] = $cover_image;
+    }
+    foreach (['jpg', 'jpeg', 'png', 'webp', 'gif'] as $ext) {
+        $candidates[] = 'uploads/' . $book_id . '/cover.' . $ext;
+    }
+    foreach (array_values(array_unique($candidates)) as $rel) {
+        $rel_clean = ltrim(str_replace('\\', '/', $rel), '/');
+        if (!preg_match('#^uploads/\d+/cover\.(jpg|jpeg|png|webp|gif)$#i', $rel_clean)) continue;
+        if (is_file(__DIR__ . '/' . $rel_clean)) {
+            $cover_rows[$book_id] = strtolower($rel_clean);
+            break;
+        }
+    }
+}
+$cover_files = count($cover_rows);
+$cover_jpg_files = 0;
+foreach ($cover_rows as $rel) {
+    if (preg_match('#/cover\.jpe?g$#i', $rel)) $cover_jpg_files++;
+}
+$add('covers', 'cover_files', $cover_files, 'Existing uploads/<book_id>/cover.* files for current filters; cover-thumb.* is not counted.');
+$add('covers', 'cover_jpg_files', $cover_jpg_files, 'Existing uploads/<book_id>/cover.jpg/jpeg files for current filters.');
+$add('covers', 'cover_missing', max(0, $selected_records - $cover_files), 'Bibliographic records without an existing real cover file.');
+
 $add('prints', 'total_print_copies', $print_active, 'Active print quantity sum.');
 $add('prints', 'deleted_print_copies', $print_deleted, 'Print quantity attached to deleted records.');
 

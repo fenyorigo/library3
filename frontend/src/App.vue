@@ -523,7 +523,7 @@ const runServerAsyncBackup = async (url, label) => {
       }
       const job = statusData.job || {};
       if (job.status === "error") {
-        throw new Error(job.error || "Full backup failed on the server.");
+        throw new Error(job.error || `${label} failed on the server.`);
       }
       if (job.status === "complete") {
         const dir = job.dir || "";
@@ -1307,11 +1307,13 @@ const onExtractEbookCovers = async () => {
   extractCoversExtracted.value = 0;
   try {
     const batchSize = 5;
-    let offset = 0;
+    let afterId = 0;
+    const reportLines = [];
+    let reportFilename = "ebook_cover_extraction.csv";
     while (true) {
       const params = new URLSearchParams({
         limit: String(batchSize),
-        offset: String(offset),
+        after_id: String(afterId),
       });
       const url = apiUrl(`extract_ebook_covers.php?${params.toString()}`);
       const res = await fetch(url, { credentials: "same-origin" });
@@ -1321,6 +1323,16 @@ const onExtractEbookCovers = async () => {
       const processed = payload.processed ?? 0;
       const extracted = payload.extracted ?? 0;
       const total = payload.total ?? 0;
+      const lastBookId = Number(payload.last_book_id || afterId);
+      const csv = typeof payload.csv === "string" ? payload.csv.trim() : "";
+      if (payload.filename) reportFilename = payload.filename;
+      if (csv) {
+        const lines = csv.split(/\r?\n/).filter(Boolean);
+        if (lines.length) {
+          if (!reportLines.length) reportLines.push(lines[0]);
+          reportLines.push(...lines.slice(1));
+        }
+      }
 
       if (!extractCoversTotal.value && total) extractCoversTotal.value = total;
       extractCoversDone.value += processed;
@@ -1328,9 +1340,13 @@ const onExtractEbookCovers = async () => {
 
       if (processed <= 0) break;
       if (total && extractCoversDone.value >= total) break;
-      offset += batchSize;
+      if (lastBookId <= afterId) break;
+      afterId = lastBookId;
     }
     alert(`Done.\nProcessed: ${extractCoversDone.value}\nExtracted: ${extractCoversExtracted.value}`);
+    if (reportLines.length > 1 && confirm("Download ebook cover extraction CSV report?")) {
+      downloadIntegrityCsv(reportFilename, `${reportLines.join("\n")}\n`);
+    }
   } catch (err) {
     alert(err && err.message ? err.message : "Extraction failed.");
   } finally {

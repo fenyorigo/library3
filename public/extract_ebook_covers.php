@@ -171,6 +171,24 @@ function ebook_save_cover(PDO $pdo, int $book_id, string $src_path): bool {
     return true;
 }
 
+function ebook_cover_report_csv(array $rows): string {
+    $fh = fopen('php://temp', 'r+');
+    fputcsv($fh, ['status', 'book_id', 'format', 'stored_file_path', 'resolved_path', 'cover_image', 'error'], ',', '"', '\\');
+    foreach ($rows as $row) {
+        fputcsv($fh, [
+            $row['status'] ?? '',
+            $row['book_id'] ?? '',
+            $row['format'] ?? '',
+            $row['stored_file_path'] ?? '',
+            $row['resolved_path'] ?? '',
+            $row['cover_image'] ?? '',
+            $row['error'] ?? '',
+        ], ',', '"', '\\');
+    }
+    rewind($fh);
+    return (string)stream_get_contents($fh);
+}
+
 /* ---------- main ---------- */
 
 try {
@@ -179,7 +197,8 @@ try {
     }
 
     $limit  = max(1, min(50, (int)($_GET['limit']  ?? 5)));
-    $offset = max(0, (int)($_GET['offset'] ?? 0));
+    $offset = max(0, (int)($_GET['offset'] ?? 0)); // legacy, kept for older callers
+    $after_id = max(0, (int)($_GET['after_id'] ?? 0));
     $force  = !empty($_GET['force']) && $_GET['force'] !== '0';
 
     $pdo = pdo();
@@ -207,17 +226,20 @@ try {
           AND bc.file_path IS NOT NULL AND bc.file_path != ''
           {$status_clause}
           {$cover_clause}
+          AND b.book_id > :after_id
         GROUP BY b.book_id
         ORDER BY b.book_id
-        LIMIT :lim OFFSET :off
+        LIMIT :lim
     ");
-    $batch_st->execute([':lim' => $limit, ':off' => $offset]);
+    $batch_st->execute([':lim' => $limit, ':after_id' => $after_id]);
     $rows = $batch_st->fetchAll(PDO::FETCH_ASSOC);
 
     $processed = 0;
     $extracted = 0;
     $skipped   = 0;
     $errors    = [];
+    $report    = [];
+    $last_book_id = $after_id;
 
     if ($rows) {
         $tmp_dir = sys_get_temp_dir() . '/bc_covers_' . bin2hex(random_bytes(6));
@@ -226,13 +248,30 @@ try {
             foreach ($rows as $row) {
                 $processed++;
                 $book_id = (int)$row['book_id'];
+                if ($book_id > $last_book_id) $last_book_id = $book_id;
                 $fp_stored = $row['epub_path'] ?? $row['pdf_path'] ?? null;
                 $fp = $fp_stored ? resolveFilesystemPath((string)$fp_stored) : null;
-                if (!$fp || !file_exists($fp)) { $skipped++; continue; }
+                $format = $fp_stored ? strtolower(pathinfo((string)$fp_stored, PATHINFO_EXTENSION)) : '';
+                $entry = [
+                    'status' => 'skipped',
+                    'book_id' => $book_id,
+                    'format' => $format,
+                    'stored_file_path' => $fp_stored,
+                    'resolved_path' => $fp,
+                    'cover_image' => '',
+                    'error' => '',
+                ];
+                if (!$fp || !file_exists($fp)) {
+                    $entry['error'] = 'file not found';
+                    $report[] = $entry;
+                    $skipped++;
+                    continue;
+                }
 
                 $tmp_cover = null;
                 try {
                     $ext = strtolower(pathinfo($fp, PATHINFO_EXTENSION));
+                    $entry['format'] = $ext;
                     $tmp_cover = ($ext === 'epub')
                         ? ebook_extract_epub_cover($fp, $tmp_dir)
                         : ebook_extract_pdf_cover($fp, $tmp_dir);
@@ -240,17 +279,27 @@ try {
                     if ($tmp_cover && is_file($tmp_cover)) {
                         if (ebook_save_cover($pdo, $book_id, $tmp_cover)) {
                             $extracted++;
+                            $entry['status'] = 'extracted';
+                            $cover_ext = strtolower(pathinfo($tmp_cover, PATHINFO_EXTENSION));
+                            if (!in_array($cover_ext, ['jpg', 'jpeg', 'png', 'webp'], true)) $cover_ext = 'jpg';
+                            $entry['cover_image'] = 'uploads/' . $book_id . '/cover.' . $cover_ext;
                         } else {
+                            $entry['status'] = 'error';
+                            $entry['error'] = 'failed to save cover';
                             $skipped++;
                         }
                     } else {
+                        $entry['error'] = 'no embedded cover found';
                         $skipped++;
                     }
                 } catch (Throwable $e) {
                     if (count($errors) < 25) $errors[] = "book #{$book_id}: " . $e->getMessage();
+                    $entry['status'] = 'error';
+                    $entry['error'] = $e->getMessage();
                     $skipped++;
                 } finally {
                     if ($tmp_cover && is_file($tmp_cover)) @unlink($tmp_cover);
+                    $report[] = $entry;
                 }
             }
         } finally {
@@ -266,11 +315,16 @@ try {
         'data' => [
             'total'     => $total,
             'offset'    => $offset,
+            'after_id'  => $after_id,
+            'last_book_id' => $last_book_id,
             'limit'     => $limit,
             'processed' => $processed,
             'extracted' => $extracted,
             'skipped'   => $skipped,
             'errors'    => $errors,
+            'report'    => $report,
+            'csv'       => $report ? ebook_cover_report_csv($report) : '',
+            'filename'  => 'ebook_cover_extraction_' . date('Ymd_His') . '.csv',
         ],
     ]);
 } catch (Throwable $e) {

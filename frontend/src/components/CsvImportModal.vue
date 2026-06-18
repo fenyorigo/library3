@@ -9,7 +9,7 @@
       <section class="body">
         <div v-if="loading" class="busy-box" aria-live="polite">
           <span class="spinner" aria-hidden="true"></span>
-          <span>Import in progress… this may take a few minutes for large bundles.</span>
+          <span>{{ progressMessage }}</span>
         </div>
 
         <p class="muted small">
@@ -145,6 +145,7 @@ export default {
       showConflicts: false,
       restoreMode: "csv_only",
       idMode: "keep_ids",
+      progressMessage: "Import in progress… this may take a few minutes for large bundles.",
     };
   },
   computed: {
@@ -159,14 +160,21 @@ export default {
       this.file = f || null;
       this.result = null;
     },
+    sleep(ms: number) {
+      return new Promise((resolve) => window.setTimeout(resolve, ms));
+    },
     async run(forceDryRun?: boolean) {
       if (!this.file) return;
       const dry = forceDryRun ?? false;
       this.loading = true;
+      this.progressMessage = dry
+        ? "Dry-run import is running on the server…"
+        : "Import is running on the server… this may take a few minutes for large bundles.";
       this.result = null;
       try {
         const fd = new FormData();
         fd.append('file', this.file);
+        fd.append('action', 'start_async');
         fd.append('dry_run', dry ? '1' : '0');
         fd.append('with_covers', this.restoreMode === 'csv_and_covers' ? '1' : '0');
         fd.append('id_mode', this.idMode);
@@ -177,29 +185,33 @@ export default {
           credentials: 'same-origin',
           body: fd,
         });
-        const raw = await res.text();
-        let data: any = {};
-        try {
-          data = raw ? JSON.parse(raw) : {};
-        } catch {
-          data = {};
+        const startData = await res.json().catch(() => ({}));
+        if (!res.ok || startData.ok === false || !startData.token) {
+          throw new Error(startData.error || `HTTP ${res.status}`);
         }
-        if (!res.ok || data.ok === false) {
-          const gatewayTimeout =
-            res.status === 504
-            || /<title>\s*504 Gateway Timeout/i.test(raw)
-            || /Gateway Timeout/i.test(raw);
-          if (gatewayTimeout && !dry) {
-            alert(
-              "Import request timed out at the gateway (504), but the backend may still be finishing in the background. Wait a bit, then reload the list and verify counts/covers."
-            );
-            this.$emit("imported", { dry_run: false });
-            return;
+
+        const token = startData.token;
+        let payload: CsvImportResult | null = null;
+        for (;;) {
+          await this.sleep(2500);
+          const statusUrl = new URL(apiUrl("import_csv.php"));
+          statusUrl.searchParams.set("action", "status");
+          statusUrl.searchParams.set("token", token);
+          const statusRes = await fetch(statusUrl.toString(), { credentials: "same-origin" });
+          const statusData = await statusRes.json().catch(() => ({}));
+          if (!statusRes.ok || statusData.ok === false) {
+            throw new Error(statusData.error || `HTTP ${statusRes.status}`);
           }
-          const fallback = raw && raw.trim() ? raw.trim().slice(0, 500) : '';
-          throw new Error(data.error || fallback || 'Import failed');
+          const job = statusData.job || {};
+          if (job.status === "error") {
+            throw new Error(job.error || "Import failed on the server.");
+          }
+          if (job.status === "complete") {
+            payload = (job.data || null) as CsvImportResult | null;
+            break;
+          }
+          this.progressMessage = job.message || this.progressMessage;
         }
-        const payload = (data && data.data ? data.data : null) as CsvImportResult | null;
 
         this.result = payload || null;
 
