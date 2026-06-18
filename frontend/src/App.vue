@@ -86,6 +86,12 @@
           v-if="isAdmin"
           class="link-btn"
           type="button"
+          @click="onExportCatalogStatistics"
+        >Catalog statistics CSV</button>
+        <button
+          v-if="isAdmin"
+          class="link-btn"
+          type="button"
           @click="onExportFullBackup"
         >Full backup (ZIP)</button>
         <button v-if="isAdmin" @click="openAuthorsMaintenance">Authors</button>
@@ -489,6 +495,56 @@ const runServerBackup = async (url, label) => {
   }
 };
 
+const sleep = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+const runServerAsyncBackup = async (url, label) => {
+  backupBusyMessage.value = `Starting ${label} backup on the server...`;
+  backupBusy.value = true;
+  try {
+    const startUrl = new URL(url.toString());
+    startUrl.searchParams.set("action", "start_async");
+    const startRes = await fetch(startUrl.toString(), { credentials: "same-origin" });
+    const startData = await startRes.json().catch(() => ({}));
+    if (!startRes.ok || startData.ok === false || !startData.token) {
+      throw new Error(startData.error || `HTTP ${startRes.status}`);
+    }
+
+    const token = startData.token;
+    backupBusyMessage.value = `Generating ${label} backup on the server...`;
+    for (;;) {
+      await sleep(2500);
+      const statusUrl = new URL(url.toString());
+      statusUrl.searchParams.set("action", "status");
+      statusUrl.searchParams.set("token", token);
+      const statusRes = await fetch(statusUrl.toString(), { credentials: "same-origin" });
+      const statusData = await statusRes.json().catch(() => ({}));
+      if (!statusRes.ok || statusData.ok === false) {
+        throw new Error(statusData.error || `HTTP ${statusRes.status}`);
+      }
+      const job = statusData.job || {};
+      if (job.status === "error") {
+        throw new Error(job.error || "Full backup failed on the server.");
+      }
+      if (job.status === "complete") {
+        const dir = job.dir || "";
+        const filename = job.filename || "";
+        const path = job.path || (dir && filename ? `${dir}/${filename}` : dir);
+        const size = Number(job.size_bytes || 0);
+        const sizeText = size > 0 ? ` (${(size / 1048576).toFixed(1)} MB)` : "";
+        const location = dir || path;
+        alert(location
+          ? `The requested ${label} backup file is in ${location}${filename ? ` (filename: ${filename}${sizeText})` : ""}.`
+          : `The requested ${label} backup file is ready${sizeText}.`);
+        return;
+      }
+      backupBusyMessage.value = job.message || `Generating ${label} backup on the server...`;
+    }
+  } finally {
+    backupBusy.value = false;
+    backupBusyMessage.value = "";
+  }
+};
+
 const runBackupFlow = async (url, label) => {
   try {
     const mode = await checkBackupMode(url);
@@ -501,6 +557,10 @@ const runBackupFlow = async (url, label) => {
     }
     if (mode.mode === "server") {
       await runServerBackup(url, label);
+      return;
+    }
+    if (mode.mode === "server_async") {
+      await runServerAsyncBackup(url, label);
       return;
     }
     alert("Unexpected backup mode response.");
@@ -825,9 +885,22 @@ const onExportSelectedBundle = async () => {
     dir: dir.value || "asc",
   };
   if (q.value) params.q = q.value;
+  if (formatFilter.value) params.format = formatFilter.value;
+  if (languageFilter.value) params.language = languageFilter.value;
   if (recordStatusFilter.value) params.record_status = recordStatusFilter.value;
   const url = buildBackupUrl("export_selected_bundle.php", params);
   await runBackupFlow(url, "selected CSV + covers");
+};
+
+const onExportCatalogStatistics = () => {
+  if (!ensureAdmin()) return;
+  const params = {};
+  if (q.value) params.q = q.value;
+  if (formatFilter.value) params.format = formatFilter.value;
+  if (languageFilter.value) params.language = languageFilter.value;
+  if (recordStatusFilter.value) params.record_status = recordStatusFilter.value;
+  const url = buildBackupUrl("catalog_statistics.php", params);
+  window.location.assign(url.toString());
 };
 
 const onExportFullBackup = async () => {

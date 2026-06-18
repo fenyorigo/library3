@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.5.2 - 2026-06-18
+
+- Added admin **Catalog statistics CSV** export for audit/support workflows. The report follows the current search, record status, format, and language filters and includes summary counts, print and ebook counts, ebook format/language breakdowns, SHA256/path health, and total ebook file size.
+- Documented the statistics export as a validation aid for full, print-only, and ebook-only export/import tests; it is not an import file.
+- Fixed selected export filter propagation so `Export selected books (CSV + covers)` honors the active `Print`, `Ebooks`, specific ebook format, and language filters.
+- Changed server-side full backup to run as an asynchronous background job with UI polling, avoiding gateway timeout errors while large ZIP archives are being generated.
+
 ## 3.5.0 - 2026-06-18
 
 Major ebook repository maintenance release.

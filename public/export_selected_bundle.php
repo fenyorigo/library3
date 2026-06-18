@@ -74,11 +74,17 @@ $timestamp_in = trim((string)($_GET['ts'] ?? ''));
 $timestamp = preg_match('/^\d{8}_\d{6}$/', $timestamp_in) ? $timestamp_in : date('Ymd_His');
 
 $q       = isset($_GET['q']) ? trim((string)$_GET['q']) : '';
+$format_in = strtolower(trim((string)($_GET['format'] ?? '')));
+$language_in = strtolower(trim((string)($_GET['language'] ?? '')));
 $record_status_in = strtolower(trim((string)($_GET['record_status'] ?? 'active')));
 $record_status_filter = in_array($record_status_in, ['active', 'deleted', 'all'], true) ? $record_status_in : 'active';
 $sort_in = strtolower((string)($_GET['sort'] ?? 'title'));
 $dir_in  = strtolower((string)($_GET['dir'] ?? 'asc'));
 $dir_sql = ($dir_in === 'desc') ? 'DESC' : 'ASC';
+
+$supported_formats = ['print', 'ebooks', 'epub', 'mobi', 'azw3', 'pdf', 'djvu', 'lit', 'prc', 'rtf', 'odt'];
+$format_filter = in_array($format_in, $supported_formats, true) ? $format_in : '';
+$language_filter = $language_in !== '' ? normalize_book_language($language_in) : '';
 
 $sortable = [
     'id'        => 'b.book_id',
@@ -144,6 +150,24 @@ if (books_table_has_record_status($pdo)) {
     } elseif ($record_status_filter === 'active') {
         $where_chunks[] = "b.record_status = 'active'";
     }
+}
+if ($format_filter === 'ebooks') {
+    $where_chunks[] = "EXISTS (
+        SELECT 1 FROM BookCopies bcf
+        WHERE bcf.book_id = b.book_id
+          AND bcf.format <> 'print'
+    )";
+} elseif ($format_filter !== '') {
+    $where_chunks[] = "EXISTS (
+        SELECT 1 FROM BookCopies bcf
+        WHERE bcf.book_id = b.book_id
+          AND bcf.format = :format_filter
+    )";
+    $params['format_filter'] = $format_filter;
+}
+if ($language_filter !== '') {
+    $where_chunks[] = "b.language = :language_filter";
+    $params['language_filter'] = $language_filter;
 }
 $where_sql = $where_chunks ? ('WHERE ' . implode(' AND ', $where_chunks)) : '';
 

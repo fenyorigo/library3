@@ -177,8 +177,28 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.5.0**
+Current application version: **3.5.2**
 Current schema version: **3.3.0**
+
+## Catalog Statistics CSV
+
+Admins can export a **Catalog statistics CSV** from the export/admin tools. This is an audit/support export, not an import file. It writes rows in the form:
+
+```csv
+section,key,value,notes
+summary,bibliographic_records_active,1234,
+ebooks,total_files,8907,Active ebook file rows.
+ebooks,sha256_missing,0,
+```
+
+The statistics export follows the currently active list filters, including search text, record status, language, and format (`Print`, `Ebooks`, or a specific ebook format). Use it to validate export/import completeness:
+
+1. Export statistics before a full, print-only, or ebook-only export.
+2. Export/import the selected records into a test instance.
+3. Export statistics again with the same filters.
+4. Compare the two CSV files.
+
+The report includes overall active/deleted record counts, print and ebook copy counts, ebook format and language breakdowns, SHA256/path health, total ebook file size, and placeholders for integrity/orphan snapshots that are not persisted yet.
 
 ## Unicode Path Handling
 
