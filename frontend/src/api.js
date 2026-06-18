@@ -415,6 +415,10 @@ export async function fetchOrphanMaintenance() {
   return getJSON('orphan_maintenance.php');
 }
 
+export async function fetchEbookOrphanMaintenance() {
+  return getJSON('ebook_orphan_maintenance.php');
+}
+
 async function postMaintenance(payload) {
   const res = await apiFetch(apiUrl('orphan_maintenance.php'), {
     method: 'POST',
@@ -423,6 +427,28 @@ async function postMaintenance(payload) {
     body: JSON.stringify(payload),
   });
   return parseJsonResponse(res);
+}
+
+async function postEbookOrphanMaintenance(payload) {
+  const res = await apiFetch(apiUrl('ebook_orphan_maintenance.php'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(payload),
+  });
+  return parseJsonResponse(res);
+}
+
+export async function exportEbookOrphanMaintenanceCsv() {
+  return postEbookOrphanMaintenance({ action: 'export_csv' });
+}
+
+export async function softDeleteEbookOrphans(items = []) {
+  return postEbookOrphanMaintenance({ action: 'soft_delete', items });
+}
+
+export async function softDeleteMissingEbookOrphans(items = []) {
+  return postEbookOrphanMaintenance({ action: 'soft_delete_missing', items });
 }
 
 export async function deleteOrphanAuthor(authorId) {

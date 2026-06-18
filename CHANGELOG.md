@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.5.0 - 2026-06-18
+
+Major ebook repository maintenance release.
+
+Added complete SHA256-based ebook maintenance workflow:
+
+- Initial SHA build.
+- Ebook orphan maintenance.
+- Incremental repository rescan.
+- Full ebook integrity check.
+- New ebook candidate CSV export.
+- Same-SHA path update handling.
+- Same-path content-change review.
+- Duplicate file and duplicate SHA reporting.
+
+This release separates database cleanup, repository scanning, and integrity validation into distinct admin tools. The SHA256 extension evolved from a simple checksum feature into a complete ebook repository maintenance workflow.
+
 ## 3.4.0 - 2026-06-16
 
 - Added global `Settings.ebook_library_root` admin setting for the mounted ebook SSD root, for example `/Volumes/SanDisk 2T`.
@@ -10,7 +27,15 @@
 - Added admin batch action to build missing SHA256 checksums for existing ebook copies, with progress counters and per-copy problem report.
 - Added Unicode-canonical ebook path handling: BookCatalog stores NFC logical paths and resolves macOS/APFS NFD filenames by canonical parent-directory matching; PHP intl/Normalizer is required.
 - Added admin incremental ebook repository rescan using SHA256 to report unchanged, same-SHA path changes, duplicate files on disk, new file candidates, same-path content changes, duplicate SHA values, missing files, and errors; path/SHA updates require explicit confirmation, new file candidates can be exported as an Import books CSV, and duplicate-on-disk files can be exported as a SHA-grouped CSV report.
-- Added explicit filename metadata repair in incremental rescan for known ebook files whose parsed filename title/subtitle/series/language no longer matches the catalog record.
+- Added explicit filename metadata repair in incremental rescan for known ebook files whose parsed filename authors/title/subtitle/series/language no longer match the catalog record.
+- Fixed incremental rescan classification order so missing DB paths are relinked by SHA before being reported as missing; multiple scanned paths with the same DB SHA are reported for admin review.
+- Added downloadable CSV audit report for filename metadata repair updates.
+- Added pre-apply CSV export for filename metadata repair candidates so admins can review proposed changes before confirming updates.
+- Added detection for missing old catalog records whose replacement ebook copy already exists in the database, with explicit soft-delete confirmation.
+- Filename metadata repair now skips unchanged rows and reports only actual DB changes in its CSV audit output.
+- Added downloadable CSV report for duplicate SHA values in the database.
+- Added Ebook orphan maintenance for stale ebook catalog records: groups active ebook copies by SHA256, identifies missing/duplicated catalog rows, exports a CSV report, and soft-deletes stale or missing records only after explicit admin confirmation.
+- Made book list search accent/umlaut-insensitive for common Latin characters and decomposed Unicode combining marks, so searches like `Westfalische` can match `Westfälische` / `Westfälische`.
 - Added full ebook integrity check for known DB copies: verifies resolved files, SHA256, file_size, missing-on-disk cases, and exports grouped reports; all repair actions require explicit confirmation.
 - Added migrations `v3_add_settings_ebook_library_root.sql` and `v3_add_bookcopy_sha256.sql`; bumped schema version to 3.3.0.
 

@@ -43,6 +43,41 @@ $dir_in    = strtolower((string)($_GET['dir']  ?? 'desc'));
 $dir_sql   = ($dir_in === 'asc') ? 'ASC' : 'DESC';
 $offset   = ($page - 1) * $limit;
 
+function search_fold_value(string $value): string {
+    $value = normalize_unicode_nfc(strip_invisible_format_chars($value));
+    if (class_exists('Normalizer')) {
+        $decomposed = Normalizer::normalize($value, Normalizer::FORM_D);
+        if (is_string($decomposed)) {
+            $value = preg_replace('/\p{Mn}+/u', '', $decomposed) ?? $decomposed;
+        }
+    }
+    $value = strtr($value, [
+        'ß' => 'ss', 'ẞ' => 'ss', 'æ' => 'ae', 'Æ' => 'ae', 'œ' => 'oe', 'Œ' => 'oe',
+        'ø' => 'o', 'Ø' => 'o', 'ł' => 'l', 'Ł' => 'l', 'đ' => 'd', 'Đ' => 'd',
+    ]);
+    return mb_strtolower($value, 'UTF-8');
+}
+
+function search_fold_sql(string $expr): string {
+    $sql = "LOWER(COALESCE({$expr}, ''))";
+    $replacements = [
+        "\u{0300}" => '', "\u{0301}" => '', "\u{0302}" => '', "\u{0303}" => '', "\u{0304}" => '',
+        "\u{0306}" => '', "\u{0307}" => '', "\u{0308}" => '', "\u{030A}" => '', "\u{030B}" => '',
+        "\u{030C}" => '', "\u{0327}" => '', "\u{0328}" => '',
+        'á' => 'a', 'à' => 'a', 'â' => 'a', 'ä' => 'a', 'ã' => 'a', 'å' => 'a', 'ă' => 'a', 'ą' => 'a',
+        'é' => 'e', 'è' => 'e', 'ê' => 'e', 'ë' => 'e', 'ě' => 'e', 'ę' => 'e',
+        'í' => 'i', 'ì' => 'i', 'î' => 'i', 'ï' => 'i',
+        'ó' => 'o', 'ò' => 'o', 'ô' => 'o', 'ö' => 'o', 'õ' => 'o', 'ő' => 'o', 'ø' => 'o',
+        'ú' => 'u', 'ù' => 'u', 'û' => 'u', 'ü' => 'u', 'ű' => 'u',
+        'ý' => 'y', 'ÿ' => 'y', 'ñ' => 'n', 'ç' => 'c', 'ć' => 'c', 'č' => 'c',
+        'ł' => 'l', 'đ' => 'd', 'ß' => 'ss', 'æ' => 'ae', 'œ' => 'oe',
+    ];
+    foreach ($replacements as $from => $to) {
+        $sql = "REPLACE({$sql}, " . $GLOBALS['pdo']->quote($from) . ', ' . $GLOBALS['pdo']->quote($to) . ')';
+    }
+    return $sql;
+}
+
 /**
  * Sorting whitelist (avoid SQL injection).
  * - authors: sort by computed column; NULLS LAST via CASE for MySQL 5.7+ compatibility
@@ -94,6 +129,7 @@ if ($q !== '') {
   $tokens = preg_split('/\s+/', $q, -1, PREG_SPLIT_NO_EMPTY) ?: [];
   foreach ($tokens as $i => $tok) {
     $like = '%' . $tok . '%';
+    $fold_like = '%' . search_fold_value($tok) . '%';
 
     // unique placeholder names per token
     $ph = [
@@ -111,6 +147,33 @@ if ($q !== '') {
       "t{$i}_asn"     => $like,
     ];
 
+    $folded_book_exprs = [
+      search_fold_sql('b.title'),
+      search_fold_sql('b.subtitle'),
+      search_fold_sql('b.series'),
+      search_fold_sql('p.name'),
+    ];
+    $folded_author_exprs = [
+      search_fold_sql('a.name'),
+      search_fold_sql('a.first_name'),
+      search_fold_sql('a.last_name'),
+      search_fold_sql('a.sort_name'),
+    ];
+    $folded_book_parts = [];
+    foreach ($folded_book_exprs as $j => $expr) {
+      $key = "t{$i}_fold_b{$j}";
+      $ph[$key] = $fold_like;
+      $folded_book_parts[] = "{$expr} LIKE :{$key}";
+    }
+    $folded_author_parts = [];
+    foreach ($folded_author_exprs as $j => $expr) {
+      $key = "t{$i}_fold_a{$j}";
+      $ph[$key] = $fold_like;
+      $folded_author_parts[] = "{$expr} LIKE :{$key}";
+    }
+    $folded_book_clause = '(' . implode(' OR ', $folded_book_parts) . ')';
+    $folded_author_clause = '(' . implode(' OR ', $folded_author_parts) . ')';
+
     $where_chunks[] = "("
       . "b.title LIKE :t{$i}_title OR "
       . "b.subtitle LIKE :t{$i}_subtitle OR "
@@ -119,6 +182,7 @@ if ($q !== '') {
       . "b.lccn LIKE :t{$i}_lccn OR "
       . "b.notes LIKE :t{$i}_notes OR "
       . "p.name LIKE :t{$i}_pub OR "
+      . "{$folded_book_clause} OR "
       . "EXISTS ("
       . "  SELECT 1 FROM BookCopies bcq "
       . "  WHERE bcq.book_id = b.book_id "
@@ -131,7 +195,8 @@ if ($q !== '') {
       . "    AND (a.name       LIKE :t{$i}_an "
       . "         OR a.first_name LIKE :t{$i}_afn "
       . "         OR a.last_name  LIKE :t{$i}_aln "
-      . "         OR a.sort_name  LIKE :t{$i}_asn)"
+      . "         OR a.sort_name  LIKE :t{$i}_asn "
+      . "         OR {$folded_author_clause})"
       . ")"
       . ")";
 

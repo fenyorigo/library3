@@ -1827,6 +1827,28 @@ function format_author_sort(?string $first, ?string $last): string {
     return trim($last . ', ' . $first);
 }
 
+function canonicalize_author_row(PDO $pdo, int $author_id, ?string $first, ?string $last, int $is_hungarian): void {
+    $first = trim((string)$first);
+    $last = trim((string)$last);
+    $display = format_author_display($first, $last, $is_hungarian);
+    $sort = format_author_sort($first, $last);
+
+    $upd = $pdo->prepare("\n        UPDATE Authors\n           SET name = ?,\n               first_name = ?,\n               last_name = ?,\n               sort_name = ?,\n               is_hungarian = ?\n         WHERE author_id = ?\n           AND (\n                COALESCE(name, '') <> ?\n             OR COALESCE(first_name, '') <> ?\n             OR COALESCE(last_name, '') <> ?\n             OR COALESCE(sort_name, '') <> ?\n             OR is_hungarian <> ?\n           )\n    ");
+    $upd->execute([
+        $display ?: null,
+        $first !== '' ? $first : null,
+        $last !== '' ? $last : null,
+        $sort ?: null,
+        $is_hungarian,
+        $author_id,
+        $display,
+        $first,
+        $last,
+        $sort,
+        $is_hungarian,
+    ]);
+}
+
 /**
  * Find or create an author row using Authors(first_name,last_name,sort_name).
  * Match priority:
@@ -1839,6 +1861,8 @@ function getOrCreateAuthorIdFromFree(PDO $pdo, string $free_text, ?int $force_is
     if ($free_text === '') return null;
 
     $has_comma = (strpos($free_text, ',') !== false);
+    $has_pipe = (strpos($free_text, '|') !== false);
+    $is_structured = $has_comma || $has_pipe;
     $is_hungarian = ($force_is_hungarian !== null) ? (int)!!$force_is_hungarian : ($has_comma ? 0 : 1);
 
     [$first, $last, $sort] = parse_author_free_text($free_text, (bool)$is_hungarian);
@@ -1846,6 +1870,50 @@ function getOrCreateAuthorIdFromFree(PDO $pdo, string $free_text, ?int $force_is
     $sort_new = format_author_sort($first, $last);
     $sort_legacy = trim($last . ' ' . $first);
     $name_alt = trim($last . ', ' . $first);
+
+    if ($is_structured) {
+        $sel_exact = $pdo->prepare("\n            SELECT author_id\n              FROM Authors\n             WHERE COALESCE(first_name, '') = ?\n               AND COALESCE(last_name, '') = ?\n               AND is_hungarian = ?\n             ORDER BY author_id ASC\n             LIMIT 1\n        ");
+        $sel_exact->execute([trim($first), trim($last), $is_hungarian]);
+        $id = $sel_exact->fetchColumn();
+        if ($id) {
+            canonicalize_author_row($pdo, (int)$id, $first, $last, $is_hungarian);
+            return (int)$id;
+        }
+
+        $sel_exact_sort = $pdo->prepare("\n            SELECT author_id\n              FROM Authors\n             WHERE COALESCE(sort_name, '') = ?\n               AND is_hungarian = ?\n             ORDER BY author_id ASC\n             LIMIT 1\n        ");
+        $sel_exact_sort->execute([$sort_new, $is_hungarian]);
+        $id = $sel_exact_sort->fetchColumn();
+        if ($id) {
+            canonicalize_author_row($pdo, (int)$id, $first, $last, $is_hungarian);
+            return (int)$id;
+        }
+
+        try {
+            $ins = $pdo->prepare("INSERT INTO Authors (name, first_name, last_name, sort_name, is_hungarian)\n                              VALUES (?, ?, ?, ?, ?)");
+            $ins->execute([
+                $display ?: null,
+                $first ?: null,
+                $last ?: null,
+                $sort_new ?: null,
+                $is_hungarian,
+            ]);
+            return (int)$pdo->lastInsertId();
+        } catch (Throwable $e) {
+            $sel_exact->execute([trim($first), trim($last), $is_hungarian]);
+            $id = $sel_exact->fetchColumn();
+            if ($id) {
+                canonicalize_author_row($pdo, (int)$id, $first, $last, $is_hungarian);
+                return (int)$id;
+            }
+            $sel_exact_sort->execute([$sort_new, $is_hungarian]);
+            $id = $sel_exact_sort->fetchColumn();
+            if ($id) {
+                canonicalize_author_row($pdo, (int)$id, $first, $last, $is_hungarian);
+                return (int)$id;
+            }
+            throw $e;
+        }
+    }
 
     // Alternate parse to tolerate flipped HU/standard order in stored data.
     $is_hungarian_alt = (int)!$is_hungarian;

@@ -91,6 +91,7 @@
         <button v-if="isAdmin" @click="openAuthorsMaintenance">Authors</button>
         <button v-if="isAdmin" @click="openUserManagement">Users</button>
         <button v-if="isAdmin" @click="openOrphanMaintenance">Orphan maintenance</button>
+        <button v-if="isAdmin" @click="openEbookOrphanMaintenance">Ebook orphans</button>
         <button v-if="isAdmin" @click="openDuplicateCandidates">Duplicate candidates</button>
         <button v-if="isAdmin" @click="openAuthLogs">Logs</button>
         <button v-if="isAdmin" class="danger" :disabled="purgeBusy" @click="onPurgeCatalog">Purge catalog</button>
@@ -151,6 +152,10 @@
     <OrphanMaintenance
       v-if="showOrphanMaintenance"
       @close="showOrphanMaintenance = false"
+    />
+    <EbookOrphanMaintenance
+      v-if="showEbookOrphanMaintenance"
+      @close="showEbookOrphanMaintenance = false"
     />
     <AuthorsMaintenance
       v-if="showAuthorsMaintenance"
@@ -215,7 +220,7 @@
           <div>Scanning ebook repository...</div>
           <div v-if="rescanTotal">{{ rescanProcessed }} / {{ rescanTotal }} files</div>
           <div v-else>Preparing scan...</div>
-          <div class="busy-subline">New {{ rescanCounters.new_file_candidate || 0 }}, path changes {{ rescanCounters.same_sha_path_changed || 0 }}, metadata {{ rescanCounters.filename_metadata_mismatch || 0 }}, changed {{ rescanCounters.same_path_different_sha || 0 }}, missing {{ rescanCounters.missing_on_disk || 0 }}</div>
+          <div class="busy-subline">New {{ rescanCounters.new_file_candidate || 0 }}, path changes {{ rescanCounters.same_sha_path_changed || 0 }}, replaced {{ rescanCounters.missing_replaced_by_existing_copy || 0 }}, metadata {{ rescanCounters.filename_metadata_mismatch || 0 }}, changed {{ rescanCounters.same_path_different_sha || 0 }}, missing {{ rescanCounters.missing_on_disk || 0 }}</div>
         </div>
       </div>
     </div>
@@ -294,6 +299,7 @@ import BookDialog from "./components/BookDialog.vue";
 import BookList from "./components/BookList.vue";
 import CsvImportModal from "./components/CsvImportModal.vue";
 import OrphanMaintenance from "./components/OrphanMaintenance.vue";
+import EbookOrphanMaintenance from "./components/EbookOrphanMaintenance.vue";
 import AuthorsMaintenance from "./components/AuthorsMaintenance.vue";
 import UserManagement from "./components/UserManagement.vue";
 import AuthLogsModal from "./components/AuthLogsModal.vue";
@@ -339,6 +345,7 @@ const selected = ref(null);
 const appVersion = APP_VERSION_DISPLAY;
 const showCsvImport = ref(false);
 const showOrphanMaintenance = ref(false);
+const showEbookOrphanMaintenance = ref(false);
 const showAuthorsMaintenance = ref(false);
 const showUserManagement = ref(false);
 const showAuthLogs = ref(false);
@@ -882,6 +889,11 @@ const openOrphanMaintenance = () => {
   showOrphanMaintenance.value = true;
 };
 
+const openEbookOrphanMaintenance = () => {
+  if (!ensureAdmin()) return;
+  showEbookOrphanMaintenance.value = true;
+};
+
 const openDuplicateCandidates = () => {
   if (!ensureAdmin()) return;
   const url = buildBackupUrl("duplicate_candidates.php", { status: "NEW" });
@@ -1364,6 +1376,8 @@ const rescanSummaryText = () => {
     `Scanned files: ${rescanProcessed.value}`,
     `Unchanged: ${c.unchanged || 0}`,
     `Same SHA path changed: ${c.same_sha_path_changed || 0}`,
+    `Same SHA multiple paths on disk: ${c.same_sha_multiple_paths_on_disk || 0}`,
+    `Missing replaced by existing copy: ${c.missing_replaced_by_existing_copy || 0}`,
     `Filename metadata mismatch: ${c.filename_metadata_mismatch || 0}`,
     `New file candidates: ${c.new_file_candidate || 0}`,
     `Same path, different SHA: ${c.same_path_different_sha || 0}`,
@@ -1372,12 +1386,12 @@ const rescanSummaryText = () => {
     `Missing on disk: ${c.missing_on_disk || 0}`,
     `Errors: ${c.errors || 0}`,
   ];
-  for (const group of ["same_sha_path_changed", "filename_metadata_mismatch", "new_file_candidate", "same_path_different_sha", "duplicate_sha_in_database", "duplicate_file_on_disk", "missing_on_disk", "errors"]) {
+  for (const group of ["same_sha_path_changed", "same_sha_multiple_paths_on_disk", "missing_replaced_by_existing_copy", "filename_metadata_mismatch", "new_file_candidate", "same_path_different_sha", "duplicate_sha_in_database", "duplicate_file_on_disk", "missing_on_disk", "errors"]) {
     const items = rescanResults.value[group] || [];
     if (!items.length) continue;
     lines.push("", `${group}:`);
     for (const item of items.slice(0, 8)) {
-      lines.push(`- ${item.copy_id ? `#${item.copy_id} ` : ""}${item.old_file_path ? `${item.old_file_path} -> ${item.new_file_path}` : (item.file_path || item.absolute_path || item.error || "")}`);
+      lines.push(`- ${item.copy_id ? `#${item.copy_id} ` : ""}${item.old_file_path ? `${item.old_file_path} -> ${item.new_file_path || (item.candidate_paths || []).join(" | ")}` : (item.file_path || item.absolute_path || item.sha256 || item.error || "")}`);
     }
     if (items.length > 8) lines.push(`...and ${items.length - 8} more`);
   }
@@ -1430,6 +1444,12 @@ const onIncrementalEbookRescan = async () => {
       alert(`Duplicate SHA groups: ${exported.groups || 0}\nCSV rows: ${exported.rows || 0}`);
     }
 
+    if ((rescanCounters.value.duplicate_sha_in_database || 0) > 0 && confirm(`Download duplicate SHA in database CSV report?\n\nThese are catalog copy rows sharing the same SHA256.`)) {
+      const exported = await rescanPost({ action: "export_duplicate_sha_database_csv", token });
+      if (exported.csv) downloadIntegrityCsv(exported.filename || "ebook_duplicate_sha_database.csv", exported.csv);
+      alert(`Duplicate DB SHA groups: ${exported.groups || 0}\nCSV rows: ${exported.rows || 0}`);
+    }
+
     const moved = rescanResults.value.same_sha_path_changed || [];
     if (moved.length && confirm(`Apply ${moved.length} same-SHA path change updates now?\n\nThis only updates BookCopies.file_path, not bibliographic metadata.`)) {
       const applied = await rescanPost({ action: "apply_path_updates", token, items: moved });
@@ -1445,10 +1465,26 @@ const onIncrementalEbookRescan = async () => {
       metadataMap.set(`${item.book_id || ""}:${item.new_file_path || item.file_path || ""}`, item);
     }
     const metadataCandidates = Array.from(metadataMap.values());
-    if (metadataCandidates.length && confirm(`Update title/subtitle/series/language from filename for ${metadataCandidates.length} book(s)?\n\nThis does not update authors, subjects, publisher, cover, or notes.`)) {
+    if (metadataCandidates.length && confirm(`Download filename metadata candidate CSV for ${metadataCandidates.length} book(s)?\n\nReview this before applying author/title/subtitle/series/language updates.`)) {
+      const exported = await rescanPost({ action: "export_filename_metadata_candidates_csv", token, items: metadataCandidates });
+      if (exported.csv) downloadIntegrityCsv(exported.filename || "ebook_filename_metadata_candidates.csv", exported.csv);
+      const warnings = exported.warnings || [];
+      alert(`Filename metadata candidate CSV rows: ${exported.rows || 0}${warnings.length ? `\nWarnings: ${warnings.length}` : ""}`);
+    }
+    if (metadataCandidates.length && confirm(`Apply filename metadata updates for ${metadataCandidates.length} book(s)?\n\nUse the candidate CSV for review first. This updates authors/title/subtitle/series/language only.`)) {
       const applied = await rescanPost({ action: "apply_filename_metadata_updates", token, items: metadataCandidates });
       const warnings = applied.warnings || [];
-      alert(`Filename metadata rows processed: ${applied.processed || 0}\nBooks changed: ${applied.updated || 0}${warnings.length ? `\nWarnings: ${warnings.length}` : ""}`);
+      alert(`Filename metadata rows processed: ${applied.processed || 0}\nBooks changed: ${applied.updated || 0}\nSkipped unchanged: ${applied.skipped || 0}${warnings.length ? `\nWarnings: ${warnings.length}` : ""}`);
+      if (applied.csv && Number(applied.updated || 0) > 0 && confirm("Download filename metadata update CSV report?")) {
+        downloadIntegrityCsv(applied.filename || "ebook_filename_metadata_updates.csv", applied.csv);
+      }
+    }
+
+    const replacedMissing = rescanResults.value.missing_replaced_by_existing_copy || [];
+    if (replacedMissing.length && confirm(`Mark ${replacedMissing.length} missing records as deleted because replacement copies already exist?\n\nThis is a soft delete of the old catalog records only; files are not deleted.`)) {
+      const applied = await rescanPost({ action: "mark_replaced_missing_deleted", token, items: replacedMissing });
+      const warnings = applied.warnings || [];
+      alert(`Replaced missing records marked deleted: ${applied.updated || 0}${warnings.length ? `\nWarnings: ${warnings.length}` : ""}`);
     }
 
     const changed = rescanResults.value.same_path_different_sha || [];

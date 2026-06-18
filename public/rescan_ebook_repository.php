@@ -2,14 +2,17 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/functions.php';
-require __DIR__ . '/auth.php';
-require_admin();
 
-error_reporting(E_ALL & ~E_DEPRECATED);
-ini_set('display_errors', '0');
-set_time_limit(120);
-ignore_user_abort(true);
-header('Content-Type: application/json; charset=utf-8');
+if (!defined('BOOKCATALOG_RESCAN_LIBRARY_ONLY')) {
+    require __DIR__ . '/auth.php';
+    require_admin();
+
+    error_reporting(E_ALL & ~E_DEPRECATED);
+    ini_set('display_errors', '0');
+    set_time_limit(120);
+    ignore_user_abort(true);
+    header('Content-Type: application/json; charset=utf-8');
+}
 
 const RESCAN_SESSION_TTL = 86400;
 
@@ -56,12 +59,16 @@ function rescan_db_indexes(PDO $pdo): array {
 
     $by_path = [];
     $by_sha = [];
-    foreach ($rows as $row) {
+    $author_map = fetch_book_authors_metadata_map($pdo, array_map(static fn($row): int => (int)($row['book_id'] ?? 0), $rows));
+    foreach ($rows as $index => $row) {
         $row['copy_id'] = (int)$row['copy_id'];
         $row['book_id'] = (int)$row['book_id'];
+        $row['authors_metadata'] = $author_map[$row['book_id']] ?? [];
+        $row['authors_csv'] = implode('; ', array_map(static fn(array $author): string => normalize_author_metadata_name($author['name'] ?? ''), $row['authors_metadata']));
         $row['file_path'] = normalize_book_copy_file_path($row['file_path'] ?? null);
         $sha = normalize_book_copy_sha256($row['sha256'] ?? null);
         $row['sha256'] = $sha;
+        $rows[$index] = $row;
         if ($row['file_path'] !== null) $by_path[$row['file_path']][] = $row;
         if ($sha !== null) $by_sha[$sha][] = $row;
     }
@@ -98,8 +105,146 @@ function rescan_store_result(array &$session, string $status, array $item): void
     $session['counters'][$status] = (int)($session['counters'][$status] ?? 0) + 1;
 }
 
+function rescan_counter_template(): array {
+    return [
+        'unchanged' => 0,
+        'same_sha_path_changed' => 0,
+        'same_sha_multiple_paths_on_disk' => 0,
+        'missing_replaced_by_existing_copy' => 0,
+        'filename_metadata_mismatch' => 0,
+        'new_file_candidate' => 0,
+        'same_path_different_sha' => 0,
+        'duplicate_sha_in_database' => 0,
+        'duplicate_file_on_disk' => 0,
+        'missing_on_disk' => 0,
+        'errors' => 0,
+    ];
+}
+
 function rescan_metadata_value(?string $value): string {
     return canonicalPathString($value ?? '') ?? '';
+}
+
+function rescan_authors_value(array $authors): string {
+    $keys = rescan_authors_keys($authors);
+    return $keys ? $keys[0] : '';
+}
+
+function rescan_author_name_options(string $name, ?int $flag): array {
+    $name = normalize_author_metadata_name($name);
+    if ($name === '') return [];
+
+    $options = [];
+    $add = static function (?string $first, ?string $last) use (&$options): void {
+        $first_key = rescan_match_fold($first);
+        $last_key = rescan_match_fold($last);
+        if ($first_key === '' && $last_key === '') return;
+        $options[] = $last_key . '|' . $first_key;
+    };
+
+    if (preg_match('/^@(.+)@$/u', $name, $m)) {
+        $add('', (string)$m[1]);
+    } elseif (strpos($name, '|') !== false || strpos($name, ',') !== false) {
+        [$first, $last] = parse_author_free_text($name, (bool)($flag ?? 0));
+        $add($first, $last);
+    } else {
+        $parts = preg_split('/\s+/u', $name, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $count = count($parts);
+        if ($count === 1) {
+            $add('', $parts[0]);
+        } elseif ($flag === 1) {
+            // Hungarian display names are family name first; compound family names are common.
+            for ($split = 1; $split < $count; $split++) {
+                $add(implode(' ', array_slice($parts, $split)), implode(' ', array_slice($parts, 0, $split)));
+            }
+        } else {
+            // Foreign display names are given name first; allow compound family names like le Goff or Bentley Hart.
+            for ($split = $count - 1; $split >= 1; $split--) {
+                $add(implode(' ', array_slice($parts, 0, $split)), implode(' ', array_slice($parts, $split)));
+            }
+        }
+    }
+
+    $options = array_values(array_unique($options));
+    return $options ?: [rescan_match_fold($name) . '|'];
+}
+
+function rescan_authors_keys(array $authors): array {
+    $parts = [];
+    foreach ($authors as $author) {
+        if (!is_array($author)) continue;
+        $name = normalize_author_metadata_name($author['name'] ?? null);
+        if ($name === '') continue;
+        $alias = normalize_author_alias($author['author_alias'] ?? ($author['alias'] ?? null));
+        $flag = normalize_author_metadata_flag($author['is_hungarian'] ?? null);
+        $name_options = rescan_author_name_options($name, $flag ?? (strpos($name, ',') === false && strpos($name, '|') === false ? 1 : 0));
+        $author_options = [];
+        foreach ($name_options as $name_key) {
+            $author_options[] = $name_key . '|' . rescan_match_fold($alias);
+        }
+        $parts[] = array_values(array_unique($author_options));
+    }
+    if (!$parts) return [];
+
+    $keys = [''];
+    foreach ($parts as $author_options) {
+        $next = [];
+        foreach ($keys as $prefix) {
+            foreach ($author_options as $option) {
+                $next[] = $prefix === '' ? $option : $prefix . ';' . $option;
+            }
+        }
+        $keys = $next;
+    }
+    return array_values(array_unique($keys));
+}
+
+function rescan_authors_match(array $current, array $parsed): bool {
+    $current_keys = rescan_authors_keys($current);
+    $parsed_keys = rescan_authors_keys($parsed);
+    if (!$current_keys && !$parsed_keys) return true;
+    return (bool)array_intersect($current_keys, $parsed_keys);
+}
+
+function rescan_match_fold(?string $value): string {
+    $value = canonicalPathString($value ?? '') ?? '';
+    if (class_exists('Normalizer')) {
+        $decomposed = Normalizer::normalize($value, Normalizer::FORM_D);
+        if (is_string($decomposed)) {
+            $value = preg_replace('/\p{Mn}+/u', '', $decomposed) ?? $decomposed;
+        }
+    }
+    $value = mb_strtolower($value, 'UTF-8');
+    $value = strtr($value, [
+        'ß' => 'ss', 'æ' => 'ae', 'œ' => 'oe', 'ø' => 'o', 'ł' => 'l', 'đ' => 'd',
+    ]);
+    // German library filenames sometimes use ae/oe/ue where the cleaned filename uses ä/ö/ü.
+    $value = str_replace(['ae', 'oe', 'ue'], ['a', 'o', 'u'], $value);
+    $value = preg_replace('/[^a-z0-9]+/u', ' ', $value) ?? $value;
+    $value = preg_replace('/\s+/', ' ', trim($value)) ?? trim($value);
+    return $value;
+}
+
+function rescan_bibliographic_key(?string $title, ?string $subtitle, ?string $series, ?string $language): string {
+    $title_key = rescan_match_fold($title);
+    $subtitle_key = rescan_match_fold($subtitle);
+    $series_key = rescan_match_fold($series);
+    if ($title_key !== '' && $series_key !== '' && $title_key === $series_key && $subtitle_key !== '') {
+        $title_key = $subtitle_key;
+    }
+    return normalize_book_language($language ?? 'unknown') . '|' . $series_key . '|' . $title_key;
+}
+
+function rescan_replacement_candidates_by_key(array $db_rows, array $scanned_by_path): array {
+    $map = [];
+    foreach ($db_rows as $row) {
+        $path = (string)($row['file_path'] ?? '');
+        if ($path === '' || !isset($scanned_by_path[$path])) continue;
+        $key = rescan_bibliographic_key($row['title'] ?? null, $row['subtitle'] ?? null, $row['series'] ?? null, $row['language'] ?? null);
+        if ($key === 'unknown||') continue;
+        $map[$key][] = $row;
+    }
+    return $map;
 }
 
 function rescan_scan_files(string $books_root_abs, string $mount_root): array {
@@ -268,9 +413,10 @@ function rescan_filename_metadata_mismatch(array $base, array $copy): ?array {
 
     $parsed_series = $parsed['series'] ?? null;
     $current_series = $copy['series'] ?? null;
+    $authors_differ = !rescan_authors_match($copy['authors_metadata'] ?? [], $parsed['authors'] ?? []);
     // Avoid turning the rescan into a broad title-normalization tool. For already-known files,
-    // only suggest bibliographic updates when explicit filename series metadata is involved.
-    if (rescan_metadata_value($parsed_series) === '' && rescan_metadata_value($current_series) === '') {
+    // title-only changes are suggested only with explicit series metadata or an author change.
+    if (!$authors_differ && rescan_metadata_value($parsed_series) === '' && rescan_metadata_value($current_series) === '') {
         return null;
     }
 
@@ -287,6 +433,9 @@ function rescan_filename_metadata_mismatch(array $base, array $copy): ?array {
             break;
         }
     }
+    if (!$differs && $authors_differ) {
+        $differs = true;
+    }
     if (!$differs) return null;
 
     return $base + [
@@ -301,37 +450,202 @@ function rescan_filename_metadata_mismatch(array $base, array $copy): ?array {
         'parsed_subtitle' => $parsed['subtitle'] ?? null,
         'parsed_series' => $parsed['series'] ?? null,
         'parsed_language' => $parsed['language'] ?? null,
+        'current_authors' => $copy['authors_csv'] ?? null,
+        'parsed_authors' => $parsed['authors_csv'] ?? null,
+        'parsed_authors_metadata_json' => $parsed['authors_metadata_json'] ?? null,
     ];
 }
 
 function rescan_apply_filename_metadata_updates(PDO $pdo, array $items): array {
     $updated = 0;
     $processed = 0;
+    $skipped = 0;
     $warnings = [];
+    $report = [];
     $st = $pdo->prepare('UPDATE Books SET title = ?, subtitle = ?, series = ?, language = ? WHERE book_id = ?');
     foreach ($items as $index => $item) {
         if (!is_array($item)) continue;
         $book_id = (int)($item['book_id'] ?? 0);
         $path = normalize_book_copy_file_path($item['new_file_path'] ?? ($item['file_path'] ?? null));
         if ($book_id <= 0 || $path === null) {
-            $warnings[] = ['index' => $index, 'error' => 'Missing book_id or file_path'];
+            $warning = ['index' => $index, 'error' => 'Missing book_id or file_path'];
+            $warnings[] = $warning;
+            $report[] = $warning + ['status' => 'error'];
             continue;
         }
         try {
+            $current = rescan_fetch_current_book_metadata($pdo, $book_id);
+            if ($current === null) throw new RuntimeException('Book not found');
             $parsed = rescan_parse_new_candidate(['file_path' => $path, 'format' => pathinfo($path, PATHINFO_EXTENSION)]);
             $title = N($parsed['title'] ?? null);
             if ($title === null) throw new RuntimeException('Parsed title is empty');
             $subtitle = N($parsed['subtitle'] ?? null);
             $series = N($parsed['series'] ?? null);
             $language = normalize_book_language($parsed['language'] ?? 'unknown');
+
+            $has_changes = rescan_metadata_value($current['title'] ?? null) !== rescan_metadata_value($title)
+                || rescan_metadata_value($current['subtitle'] ?? null) !== rescan_metadata_value($subtitle)
+                || rescan_metadata_value($current['series'] ?? null) !== rescan_metadata_value($series)
+                || normalize_book_language($current['language'] ?? 'unknown') !== $language
+                || !rescan_authors_match($current['authors_metadata'] ?? [], $parsed['authors'] ?? []);
+            if (!$has_changes) {
+                $skipped++;
+                continue;
+            }
+
+            $pdo->beginTransaction();
             $st->execute([$title, $subtitle, $series, $language, $book_id]);
+            $pdo->prepare('DELETE FROM Books_Authors WHERE book_id = ?')->execute([$book_id]);
+            attachAuthorsMetadataToBook($pdo, $book_id, $parsed['authors_csv'] ?? null, $parsed['authors_metadata_json'] ?? null);
+            $pdo->commit();
             $processed++;
-            $updated += $st->rowCount();
+            $updated++;
+            $report[] = [
+                'status' => 'updated',
+                'copy_id' => $item['copy_id'] ?? null,
+                'book_id' => $book_id,
+                'file_path' => $path,
+                'old_authors' => $current['authors_csv'] ?? null,
+                'new_authors' => $parsed['authors_csv'] ?? null,
+                'old_title' => $current['title'] ?? null,
+                'new_title' => $title,
+                'old_subtitle' => $current['subtitle'] ?? null,
+                'new_subtitle' => $subtitle,
+                'old_series' => $current['series'] ?? null,
+                'new_series' => $series,
+                'old_language' => $current['language'] ?? null,
+                'new_language' => $language,
+            ];
         } catch (Throwable $e) {
-            $warnings[] = ['index' => $index, 'file_path' => $path, 'error' => $e->getMessage()];
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            $warning = ['index' => $index, 'file_path' => $path, 'error' => $e->getMessage()];
+            $warnings[] = $warning;
+            $report[] = $warning + [
+                'status' => 'error',
+                'copy_id' => $item['copy_id'] ?? null,
+                'book_id' => $book_id,
+            ];
         }
     }
-    return ['processed' => $processed, 'updated' => $updated, 'warnings' => $warnings];
+    return [
+        'processed' => $processed,
+        'updated' => $updated,
+        'skipped' => $skipped,
+        'warnings' => $warnings,
+        'report' => $report,
+        'csv' => rescan_filename_metadata_report_csv($report),
+        'filename' => 'ebook_filename_metadata_updates_' . date('Ymd_His') . '.csv',
+    ];
+}
+
+function rescan_fetch_current_book_metadata(PDO $pdo, int $book_id): ?array {
+    $st = $pdo->prepare('SELECT book_id, title, subtitle, series, language FROM Books WHERE book_id = ?');
+    $st->execute([$book_id]);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) return null;
+    $authors = fetch_book_authors_metadata_map($pdo, [$book_id])[$book_id] ?? [];
+    $row['authors_metadata'] = $authors;
+    $row['authors_csv'] = implode('; ', array_map(static fn(array $author): string => normalize_author_metadata_name($author['name'] ?? ''), $authors));
+    return $row;
+}
+
+function rescan_filename_metadata_report_csv(array $report): string {
+    $headers = [
+        'status', 'copy_id', 'book_id', 'file_path',
+        'old_authors', 'new_authors',
+        'old_title', 'new_title',
+        'old_subtitle', 'new_subtitle',
+        'old_series', 'new_series',
+        'old_language', 'new_language',
+        'error',
+    ];
+    $fh = fopen('php://temp', 'r+');
+    if ($fh === false) return '';
+    fputcsv($fh, $headers);
+    foreach ($report as $row) {
+        if (!is_array($row)) continue;
+        fputcsv($fh, array_map(static fn(string $key) => $row[$key] ?? '', $headers));
+    }
+    rewind($fh);
+    $csv = stream_get_contents($fh);
+    fclose($fh);
+    return $csv === false ? '' : $csv;
+}
+
+function rescan_filename_metadata_candidate_row(PDO $pdo, array $item, int $index): ?array {
+    $book_id = (int)($item['book_id'] ?? 0);
+    $path = normalize_book_copy_file_path($item['new_file_path'] ?? ($item['file_path'] ?? null));
+    if ($book_id <= 0 || $path === null) {
+        return ['status' => 'error', 'index' => $index, 'error' => 'Missing book_id or file_path'];
+    }
+
+    $current = rescan_fetch_current_book_metadata($pdo, $book_id);
+    if ($current === null) {
+        return ['status' => 'error', 'index' => $index, 'copy_id' => $item['copy_id'] ?? null, 'book_id' => $book_id, 'file_path' => $path, 'error' => 'Book not found'];
+    }
+    $parsed = rescan_parse_new_candidate(['file_path' => $path, 'format' => pathinfo($path, PATHINFO_EXTENSION)]);
+    $title = N($parsed['title'] ?? null);
+    if ($title === null) {
+        return ['status' => 'error', 'index' => $index, 'copy_id' => $item['copy_id'] ?? null, 'book_id' => $book_id, 'file_path' => $path, 'error' => 'Parsed title is empty'];
+    }
+    $subtitle = N($parsed['subtitle'] ?? null);
+    $series = N($parsed['series'] ?? null);
+    $language = normalize_book_language($parsed['language'] ?? 'unknown');
+
+    $has_changes = rescan_metadata_value($current['title'] ?? null) !== rescan_metadata_value($title)
+        || rescan_metadata_value($current['subtitle'] ?? null) !== rescan_metadata_value($subtitle)
+        || rescan_metadata_value($current['series'] ?? null) !== rescan_metadata_value($series)
+        || normalize_book_language($current['language'] ?? 'unknown') !== $language
+        || !rescan_authors_match($current['authors_metadata'] ?? [], $parsed['authors'] ?? []);
+    if (!$has_changes) return null;
+
+    return [
+        'status' => 'candidate',
+        'copy_id' => $item['copy_id'] ?? null,
+        'book_id' => $book_id,
+        'file_path' => $path,
+        'old_authors' => $current['authors_csv'] ?? null,
+        'new_authors' => $parsed['authors_csv'] ?? null,
+        'old_title' => $current['title'] ?? null,
+        'new_title' => $title,
+        'old_subtitle' => $current['subtitle'] ?? null,
+        'new_subtitle' => $subtitle,
+        'old_series' => $current['series'] ?? null,
+        'new_series' => $series,
+        'old_language' => $current['language'] ?? null,
+        'new_language' => $language,
+    ];
+}
+
+function rescan_filename_metadata_candidates_csv(PDO $pdo, array $items): array {
+    $report = [];
+    $warnings = [];
+    foreach ($items as $index => $item) {
+        if (!is_array($item)) continue;
+        try {
+            $row = rescan_filename_metadata_candidate_row($pdo, $item, $index);
+            if ($row === null) continue;
+            if (($row['status'] ?? '') === 'error') $warnings[] = $row;
+            $report[] = $row;
+        } catch (Throwable $e) {
+            $warning = [
+                'status' => 'error',
+                'index' => $index,
+                'copy_id' => $item['copy_id'] ?? null,
+                'book_id' => $item['book_id'] ?? null,
+                'file_path' => $item['new_file_path'] ?? ($item['file_path'] ?? null),
+                'error' => $e->getMessage(),
+            ];
+            $warnings[] = $warning;
+            $report[] = $warning;
+        }
+    }
+    return [
+        'csv' => rescan_filename_metadata_report_csv($report),
+        'rows' => count($report),
+        'warnings' => $warnings,
+        'filename' => 'ebook_filename_metadata_candidates_' . date('Ymd_His') . '.csv',
+    ];
 }
 
 function rescan_candidate_group_key(array $parsed): string {
@@ -418,11 +732,15 @@ function rescan_duplicate_files_csv(array $session): array {
 
     $groups = 0;
     $rows = 0;
-    $sha_paths = $session['scanned_sha_paths'] ?? [];
-    ksort($sha_paths);
-    foreach ($sha_paths as $sha => $paths) {
-        if (!is_array($paths)) continue;
-        $paths = array_values(array_unique(array_filter(array_map('strval', $paths), static fn(string $p): bool => $p !== '')));
+    $sha_files = $session['scanned_by_sha'] ?? [];
+    ksort($sha_files);
+    foreach ($sha_files as $sha => $records) {
+        if (!is_array($records)) continue;
+        $paths = [];
+        foreach ($records as $record) {
+            if (is_array($record) && !empty($record['file_path'])) $paths[] = (string)$record['file_path'];
+        }
+        $paths = array_values(array_unique(array_filter($paths, static fn(string $p): bool => $p !== '')));
         sort($paths, SORT_STRING);
         if (count($paths) < 2) continue;
         $groups++;
@@ -451,6 +769,265 @@ function rescan_duplicate_files_csv(array $session): array {
         'groups' => $groups,
         'rows' => $rows,
     ];
+}
+
+function rescan_duplicate_sha_database_csv(array $session): array {
+    $headers = [
+        'duplicate_group', 'sha256', 'occurrence', 'copy_id', 'book_id', 'file_path',
+        'title', 'subtitle', 'series', 'authors', 'scanned_paths', 'duplicate_count',
+    ];
+    $fh = fopen('php://temp', 'r+');
+    if ($fh === false) throw new RuntimeException('Could not create CSV stream');
+    fputcsv($fh, $headers);
+
+    $groups = 0;
+    $rows = 0;
+    foreach (($session['results']['duplicate_sha_in_database'] ?? []) as $item) {
+        if (!is_array($item)) continue;
+        $matches = is_array($item['matches'] ?? null) ? $item['matches'] : [];
+        if (count($matches) < 2) continue;
+        $groups++;
+        $sha = (string)($item['sha256'] ?? '');
+        $scanned_paths = implode(' | ', array_values(array_filter(array_map('strval', $item['scanned_paths'] ?? []))));
+        $occurrence = 0;
+        foreach ($matches as $match) {
+            if (!is_array($match)) continue;
+            $occurrence++;
+            fputcsv($fh, [
+                $groups,
+                $sha,
+                $occurrence,
+                $match['copy_id'] ?? '',
+                $match['book_id'] ?? '',
+                $match['file_path'] ?? '',
+                $match['title'] ?? '',
+                $match['subtitle'] ?? '',
+                $match['series'] ?? '',
+                $match['authors'] ?? '',
+                $scanned_paths,
+                count($matches),
+            ]);
+            $rows++;
+        }
+    }
+    rewind($fh);
+    $csv = stream_get_contents($fh);
+    fclose($fh);
+    return [
+        'csv' => $csv === false ? '' : $csv,
+        'groups' => $groups,
+        'rows' => $rows,
+    ];
+}
+
+function rescan_path_change_item(array $base, array $copy, string $new_path): array {
+    $change = rescan_change_type((string)$copy['file_path'], $new_path);
+    $item = $base + [
+        'status' => 'same_sha_path_changed',
+        'copy_id' => $copy['copy_id'],
+        'book_id' => $copy['book_id'],
+        'title' => $copy['title'] ?? null,
+        'old_file_path' => $copy['file_path'],
+        'new_file_path' => $new_path,
+    ] + $change;
+    try {
+        $parsed = rescan_parse_new_candidate($base);
+        $item['parsed_title'] = $parsed['title'] ?? null;
+        $item['parsed_subtitle'] = $parsed['subtitle'] ?? null;
+        $item['parsed_series'] = $parsed['series'] ?? null;
+        $item['parsed_language'] = $parsed['language'] ?? null;
+    } catch (Throwable $e) {
+        $item['metadata_parse_error'] = $e->getMessage();
+    }
+    return $item;
+}
+
+function rescan_finalize_classification(PDO $pdo, array &$session): array {
+    $errors = $session['results']['errors'] ?? [];
+    $error_count = (int)($session['counters']['errors'] ?? count($errors));
+    $session['results'] = $errors ? ['errors' => $errors] : [];
+    $session['counters'] = rescan_counter_template();
+    $session['counters']['errors'] = $error_count;
+
+    $db = rescan_db_indexes($pdo);
+    $scanned_by_path = is_array($session['scanned_by_path'] ?? null) ? $session['scanned_by_path'] : [];
+    $scanned_by_sha = is_array($session['scanned_by_sha'] ?? null) ? $session['scanned_by_sha'] : [];
+    $replacement_by_key = rescan_replacement_candidates_by_key($db['rows'], $scanned_by_path);
+    $batch_results = [];
+
+    foreach ($db['rows'] as $row) {
+        $path = (string)($row['file_path'] ?? '');
+        $sha = (string)($row['sha256'] ?? '');
+        $scanned_exact = $path !== '' && isset($scanned_by_path[$path]) && is_array($scanned_by_path[$path]) ? $scanned_by_path[$path] : null;
+
+        if ($scanned_exact !== null) {
+            $scanned_sha = normalize_book_copy_sha256($scanned_exact['sha256'] ?? null);
+            if ($sha !== '' && $scanned_sha === $sha) {
+                $base = $scanned_exact;
+                $item = $base + ['status' => 'unchanged', 'copy_id' => $row['copy_id'], 'book_id' => $row['book_id'], 'title' => $row['title'] ?? null];
+                $metadata_mismatch = rescan_filename_metadata_mismatch($base, $row);
+                if ($metadata_mismatch !== null) {
+                    rescan_store_result($session, 'filename_metadata_mismatch', $metadata_mismatch);
+                    $batch_results[] = $metadata_mismatch;
+                } else {
+                    rescan_store_result($session, 'unchanged', $item);
+                }
+            } else {
+                $item = $scanned_exact + [
+                    'status' => 'same_path_different_sha',
+                    'copy_id' => $row['copy_id'],
+                    'book_id' => $row['book_id'],
+                    'title' => $row['title'] ?? null,
+                    'old_sha256' => $row['sha256'] ?? null,
+                    'new_sha256' => $scanned_sha,
+                ];
+                rescan_store_result($session, 'same_path_different_sha', $item);
+                $batch_results[] = $item;
+            }
+            continue;
+        }
+
+        $sha_matches = ($sha !== '' && isset($scanned_by_sha[$sha]) && is_array($scanned_by_sha[$sha])) ? array_values($scanned_by_sha[$sha]) : [];
+        if (count($sha_matches) === 1 && is_array($sha_matches[0])) {
+            $scanned = $sha_matches[0];
+            $item = rescan_path_change_item($scanned, $row, (string)$scanned['file_path']);
+            rescan_store_result($session, 'same_sha_path_changed', $item);
+            $batch_results[] = $item;
+        } elseif (count($sha_matches) > 1) {
+            $candidate_paths = [];
+            foreach ($sha_matches as $match) {
+                if (is_array($match) && !empty($match['file_path'])) $candidate_paths[] = (string)$match['file_path'];
+            }
+            $item = [
+                'status' => 'same_sha_multiple_paths_on_disk',
+                'copy_id' => $row['copy_id'],
+                'book_id' => $row['book_id'],
+                'title' => $row['title'] ?? null,
+                'old_file_path' => $path,
+                'sha256' => $sha ?: null,
+                'candidate_paths' => array_values(array_unique($candidate_paths)),
+            ];
+            rescan_store_result($session, 'same_sha_multiple_paths_on_disk', $item);
+            $batch_results[] = $item;
+        } else {
+            $replacement_key = null;
+            try {
+                $parsed_missing = rescan_parse_new_candidate(['file_path' => $path, 'format' => pathinfo($path, PATHINFO_EXTENSION)]);
+                $replacement_key = rescan_bibliographic_key($parsed_missing['title'] ?? null, $parsed_missing['subtitle'] ?? null, $parsed_missing['series'] ?? null, $parsed_missing['language'] ?? null);
+            } catch (Throwable $e) {
+                $replacement_key = rescan_bibliographic_key($row['title'] ?? null, $row['subtitle'] ?? null, $row['series'] ?? null, $row['language'] ?? null);
+            }
+            $replacement_candidates = array_values(array_filter($replacement_by_key[$replacement_key] ?? [], static fn(array $candidate): bool => (int)($candidate['book_id'] ?? 0) !== (int)($row['book_id'] ?? 0)));
+            if ($replacement_candidates) {
+                $matches = array_map(static fn(array $candidate): array => [
+                    'copy_id' => $candidate['copy_id'] ?? null,
+                    'book_id' => $candidate['book_id'] ?? null,
+                    'file_path' => $candidate['file_path'] ?? null,
+                    'title' => $candidate['title'] ?? null,
+                    'subtitle' => $candidate['subtitle'] ?? null,
+                    'series' => $candidate['series'] ?? null,
+                    'authors' => $candidate['authors_csv'] ?? null,
+                    'sha256' => $candidate['sha256'] ?? null,
+                ], $replacement_candidates);
+                $item = [
+                    'status' => 'missing_replaced_by_existing_copy',
+                    'copy_id' => $row['copy_id'],
+                    'book_id' => $row['book_id'],
+                    'title' => $row['title'] ?? null,
+                    'subtitle' => $row['subtitle'] ?? null,
+                    'series' => $row['series'] ?? null,
+                    'authors' => $row['authors_csv'] ?? null,
+                    'file_path' => $path,
+                    'sha256' => $sha ?: null,
+                    'replacement_key' => $replacement_key,
+                    'replacement_matches' => $matches,
+                ];
+                rescan_store_result($session, 'missing_replaced_by_existing_copy', $item);
+                $batch_results[] = $item;
+                continue;
+            }
+            $item = [
+                'status' => 'missing_on_disk',
+                'copy_id' => $row['copy_id'],
+                'book_id' => $row['book_id'],
+                'title' => $row['title'] ?? null,
+                'file_path' => $path,
+                'sha256' => $sha ?: null,
+            ];
+            rescan_store_result($session, 'missing_on_disk', $item);
+            $batch_results[] = $item;
+        }
+    }
+
+    foreach ($db['by_sha'] as $sha => $rows) {
+        if (count($rows) <= 1) continue;
+        $scanned_paths = [];
+        foreach (($scanned_by_sha[$sha] ?? []) as $record) {
+            if (is_array($record) && !empty($record['file_path'])) $scanned_paths[] = (string)$record['file_path'];
+        }
+        $item = [
+            'status' => 'duplicate_sha_in_database',
+            'sha256' => $sha,
+            'matches' => array_map(static fn($r) => [
+                'copy_id' => $r['copy_id'],
+                'book_id' => $r['book_id'],
+                'file_path' => $r['file_path'],
+                'title' => $r['title'] ?? null,
+                'subtitle' => $r['subtitle'] ?? null,
+                'series' => $r['series'] ?? null,
+                'authors' => $r['authors_csv'] ?? null,
+                'authors_metadata' => $r['authors_metadata'] ?? [],
+            ], $rows),
+            'scanned_paths' => array_values(array_unique($scanned_paths)),
+        ];
+        rescan_store_result($session, 'duplicate_sha_in_database', $item);
+        $batch_results[] = $item;
+    }
+
+    foreach ($scanned_by_sha as $sha => $records) {
+        if (!is_array($records)) continue;
+        $records = array_values(array_filter($records, 'is_array'));
+        if (count($records) > 1) {
+            foreach (array_slice($records, 1) as $record) {
+                $prior_paths = array_map(static fn($r): string => (string)($r['file_path'] ?? ''), array_slice($records, 0, 1));
+                $item = $record + ['status' => 'duplicate_file_on_disk', 'matching_scanned_paths' => array_values(array_filter($prior_paths))];
+                rescan_store_result($session, 'duplicate_file_on_disk', $item);
+                $batch_results[] = $item;
+            }
+        }
+        if (isset($db['by_sha'][$sha])) continue;
+        foreach ($records as $record) {
+            $item = $record + ['status' => 'new_file_candidate'];
+            rescan_store_result($session, 'new_file_candidate', $item);
+            $batch_results[] = $item;
+        }
+    }
+
+    return $batch_results;
+}
+
+function rescan_mark_replaced_missing_deleted(PDO $pdo, array $items): array {
+    if (!books_table_has_record_status($pdo)) {
+        return ['updated' => 0, 'warnings' => [['error' => 'Books.record_status is not available']]];
+    }
+    $updated = 0;
+    $warnings = [];
+    $st = $pdo->prepare("UPDATE Books SET record_status = 'deleted' WHERE book_id = ? AND record_status = 'active'");
+    foreach ($items as $index => $item) {
+        if (!is_array($item)) continue;
+        $book_id = (int)($item['book_id'] ?? 0);
+        if ($book_id <= 0) {
+            $warnings[] = ['index' => $index, 'error' => 'Missing book_id'];
+            continue;
+        }
+        $st->execute([$book_id]);
+        $updated += $st->rowCount();
+    }
+    return ['updated' => $updated, 'warnings' => $warnings];
+}
+
+if (defined('BOOKCATALOG_RESCAN_LIBRARY_ONLY')) {
+    return;
 }
 
 try {
@@ -488,19 +1065,11 @@ try {
             'seen_paths' => array_keys($seen),
             'seen_sha' => [],
             'scanned_sha_paths' => [],
+            'scanned_by_path' => [],
+            'scanned_by_sha' => [],
             'offset' => 0,
             'total_files' => count($files),
-            'counters' => [
-                'unchanged' => 0,
-                'same_sha_path_changed' => 0,
-                'filename_metadata_mismatch' => 0,
-                'new_file_candidate' => 0,
-                'same_path_different_sha' => 0,
-                'duplicate_sha_in_database' => 0,
-                'duplicate_file_on_disk' => 0,
-                'missing_on_disk' => 0,
-                'errors' => 0,
-            ],
+            'counters' => rescan_counter_template(),
             'results' => [],
         ];
         rescan_save($session);
@@ -518,7 +1087,6 @@ try {
 
     if ($action === 'next') {
         $limit = max(1, min(50, (int)($in['limit'] ?? 20)));
-        $db = rescan_db_indexes($pdo);
         $start = (int)($session['offset'] ?? 0);
         $files = $session['files'] ?? [];
         $batch = array_slice($files, $start, $limit);
@@ -551,65 +1119,10 @@ try {
                 }
                 $base['sha256'] = $sha;
                 $session['seen_sha'][$sha] = true;
-                $prior_scanned_paths = $session['scanned_sha_paths'][$sha] ?? [];
                 $session['scanned_sha_paths'][$sha][] = $path;
-                $path_rows = $db['by_path'][$path] ?? [];
-                $sha_rows = $db['by_sha'][$sha] ?? [];
-
-                if ($prior_scanned_paths) {
-                    $item = $base + [
-                        'status' => 'duplicate_file_on_disk',
-                        'matching_scanned_paths' => $prior_scanned_paths,
-                    ];
-                    rescan_store_result($session, 'duplicate_file_on_disk', $item);
-                    $batch_results[] = $item;
-                } elseif ($path_rows) {
-                    $copy = $path_rows[0];
-                    if (($copy['sha256'] ?? null) === $sha) {
-                        $item = $base + ['status' => 'unchanged', 'copy_id' => $copy['copy_id'], 'book_id' => $copy['book_id'], 'title' => $copy['title'] ?? null];
-                        $metadata_mismatch = rescan_filename_metadata_mismatch($base, $copy);
-                        if ($metadata_mismatch !== null) {
-                            rescan_store_result($session, 'filename_metadata_mismatch', $metadata_mismatch);
-                            $batch_results[] = $metadata_mismatch;
-                        } else {
-                            rescan_store_result($session, 'unchanged', $item);
-                        }
-                    } else {
-                        $item = $base + ['status' => 'same_path_different_sha', 'copy_id' => $copy['copy_id'], 'book_id' => $copy['book_id'], 'title' => $copy['title'] ?? null, 'old_sha256' => $copy['sha256'] ?? null, 'new_sha256' => $sha];
-                        rescan_store_result($session, 'same_path_different_sha', $item);
-                        $batch_results[] = $item;
-                    }
-                } elseif (count($sha_rows) === 1) {
-                    $copy = $sha_rows[0];
-                    $change = rescan_change_type((string)$copy['file_path'], $path);
-                    $item = $base + [
-                        'status' => 'same_sha_path_changed',
-                        'copy_id' => $copy['copy_id'],
-                        'book_id' => $copy['book_id'],
-                        'title' => $copy['title'] ?? null,
-                        'old_file_path' => $copy['file_path'],
-                        'new_file_path' => $path,
-                    ] + $change;
-                    try {
-                        $parsed = rescan_parse_new_candidate($base);
-                        $item['parsed_title'] = $parsed['title'] ?? null;
-                        $item['parsed_subtitle'] = $parsed['subtitle'] ?? null;
-                        $item['parsed_series'] = $parsed['series'] ?? null;
-                        $item['parsed_language'] = $parsed['language'] ?? null;
-                    } catch (Throwable $e) {
-                        $item['metadata_parse_error'] = $e->getMessage();
-                    }
-                    rescan_store_result($session, 'same_sha_path_changed', $item);
-                    $batch_results[] = $item;
-                } elseif (count($sha_rows) > 1) {
-                    $item = $base + ['status' => 'duplicate_sha_in_database', 'matches' => array_map(static fn($r) => ['copy_id' => $r['copy_id'], 'book_id' => $r['book_id'], 'file_path' => $r['file_path'], 'title' => $r['title'] ?? null], $sha_rows)];
-                    rescan_store_result($session, 'duplicate_sha_in_database', $item);
-                    $batch_results[] = $item;
-                } else {
-                    $item = $base + ['status' => 'new_file_candidate'];
-                    rescan_store_result($session, 'new_file_candidate', $item);
-                    $batch_results[] = $item;
-                }
+                $session['scanned_by_path'][$path] = $base;
+                if (!isset($session['scanned_by_sha'][$sha])) $session['scanned_by_sha'][$sha] = [];
+                $session['scanned_by_sha'][$sha][] = $base;
             } catch (Throwable $e) {
                 $item = $base + ['status' => 'errors', 'error' => $e->getMessage()];
                 rescan_store_result($session, 'errors', $item);
@@ -620,25 +1133,7 @@ try {
         $session['offset'] = $start + $processed;
         $done = $session['offset'] >= (int)$session['total_files'];
         if ($done && empty($session['missing_finalized'])) {
-            $seen_paths = array_fill_keys($session['seen_paths'] ?? [], true);
-            $seen_sha = $session['seen_sha'] ?? [];
-            foreach (rescan_db_indexes($pdo)['rows'] as $row) {
-                $path = (string)($row['file_path'] ?? '');
-                $sha = (string)($row['sha256'] ?? '');
-                if (isset($seen_paths[$path])) continue;
-                if ($sha !== '' && isset($seen_sha[$sha])) continue;
-                if (resolveFilesystemPath($path) !== null) continue;
-                $item = [
-                    'status' => 'missing_on_disk',
-                    'copy_id' => $row['copy_id'],
-                    'book_id' => $row['book_id'],
-                    'title' => $row['title'] ?? null,
-                    'file_path' => $path,
-                    'sha256' => $sha ?: null,
-                ];
-                rescan_store_result($session, 'missing_on_disk', $item);
-                $batch_results[] = $item;
-            }
+            $batch_results = array_merge($batch_results, rescan_finalize_classification($pdo, $session));
             $session['missing_finalized'] = true;
         }
         rescan_save($session);
@@ -688,6 +1183,16 @@ try {
         json_out(['ok' => true, 'data' => rescan_apply_filename_metadata_updates($pdo, $items)]);
     }
 
+    if ($action === 'export_filename_metadata_candidates_csv') {
+        $items = is_array($in['items'] ?? null) ? $in['items'] : ($session['results']['filename_metadata_mismatch'] ?? []);
+        json_out(['ok' => true, 'data' => rescan_filename_metadata_candidates_csv($pdo, $items)]);
+    }
+
+    if ($action === 'mark_replaced_missing_deleted') {
+        $items = is_array($in['items'] ?? null) ? $in['items'] : ($session['results']['missing_replaced_by_existing_copy'] ?? []);
+        json_out(['ok' => true, 'data' => rescan_mark_replaced_missing_deleted($pdo, $items)]);
+    }
+
     if ($action === 'export_new_candidates_csv') {
         $items = is_array($in['items'] ?? null) ? $in['items'] : ($session['results']['new_file_candidate'] ?? []);
         $export = rescan_new_candidates_csv($items);
@@ -703,6 +1208,16 @@ try {
         $export = rescan_duplicate_files_csv($session);
         json_out(['ok' => true, 'data' => [
             'filename' => 'ebook_duplicate_files_' . date('Ymd_His') . '.csv',
+            'csv' => $export['csv'],
+            'groups' => $export['groups'],
+            'rows' => $export['rows'],
+        ]]);
+    }
+
+    if ($action === 'export_duplicate_sha_database_csv') {
+        $export = rescan_duplicate_sha_database_csv($session);
+        json_out(['ok' => true, 'data' => [
+            'filename' => 'ebook_duplicate_sha_database_' . date('Ymd_His') . '.csv',
             'csv' => $export['csv'],
             'groups' => $export['groups'],
             'rows' => $export['rows'],
