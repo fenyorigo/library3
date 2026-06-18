@@ -418,6 +418,7 @@ const preferences = ref({
 });
 const initialQueryParam = ref(null);
 const searchAutofillTimers = ref([]);
+const repositoryHealthTimer = ref(null);
 
 const onUnauthorized = () => {
   rows.value = [];
@@ -596,6 +597,7 @@ const ensureAdmin = () => {
 
 const refreshEbookRepositoryHealth = async ({ writeTest = false, quiet = false } = {}) => {
   if (!isAdmin.value) return null;
+  if (repositoryCheckBusy.value && !writeTest) return ebookRepositoryHealth.value;
   repositoryCheckBusy.value = true;
   try {
     const url = new URL(apiUrl("ebook_repository_health.php"));
@@ -635,6 +637,23 @@ const ensureEbookRepositoryAvailable = () => {
   const message = ebookRepositoryHealth.value?.message || "Ebook repository is not available. Mount the SSD and click Check ebook repository.";
   alert(message);
   return false;
+};
+
+const refreshEbookRepositoryHealthQuietly = () => {
+  if (!isAdmin.value) return;
+  refreshEbookRepositoryHealth({ quiet: true }).catch(() => {});
+};
+
+const startRepositoryHealthPolling = () => {
+  if (repositoryHealthTimer.value !== null || !isAdmin.value) return;
+  repositoryHealthTimer.value = window.setInterval(refreshEbookRepositoryHealthQuietly, 15000);
+};
+
+const stopRepositoryHealthPolling = () => {
+  if (repositoryHealthTimer.value !== null) {
+    window.clearInterval(repositoryHealthTimer.value);
+    repositoryHealthTimer.value = null;
+  }
 };
 
 const DEFAULT_THEME = {
@@ -1785,15 +1804,19 @@ onMounted(async () => {
   await initAuth();
   if (isAdmin.value && !ebookRepositoryHealth.value) {
     await refreshEbookRepositoryHealth({ quiet: true });
+    startRepositoryHealthPolling();
   }
   applyPreferences(preferences.value);
   window.addEventListener("popstate", onPopState);
   window.addEventListener("focus", scheduleSearchScrub);
+  window.addEventListener("focus", refreshEbookRepositoryHealthQuietly);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("popstate", onPopState);
   window.removeEventListener("focus", scheduleSearchScrub);
+  window.removeEventListener("focus", refreshEbookRepositoryHealthQuietly);
+  stopRepositoryHealthPolling();
   searchAutofillTimers.value.forEach((timer) => window.clearTimeout(timer));
   searchAutofillTimers.value = [];
 });
@@ -1802,9 +1825,11 @@ watch(user, async (next, prev) => {
   if (next && !prev) {
     await loadPreferences();
     if (isAdmin.value) await refreshEbookRepositoryHealth({ quiet: true });
+    startRepositoryHealthPolling();
     reload();
     scheduleSearchScrub();
   } else if (!next) {
+    stopRepositoryHealthPolling();
     ebookRepositoryHealth.value = null;
     resetPreferences();
   }
