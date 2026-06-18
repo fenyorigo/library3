@@ -166,6 +166,16 @@
           />
         </div>
 
+        <div v-if="isAdmin" class="row admin-row diagnostics-row">
+          <label class="label">PHP runtime</label>
+          <div class="diagnostics-grid">
+            <div v-for="item in phpRuntimeRows" :key="item.key" class="diagnostic-item">
+              <span class="diagnostic-key">{{ item.label }}</span>
+              <span class="diagnostic-value">{{ item.value || 'n/a' }}</span>
+            </div>
+          </div>
+        </div>
+
         <ChangePassword />
       </section>
 
@@ -219,6 +229,7 @@ const form = ref({
 const settingsForm = ref({
   ebook_library_root: "",
 });
+const phpRuntime = ref<Record<string, string>>({});
 const objectUrl = ref("");
 const autofillTimers = ref<number[]>([]);
 const cleanHex = (value: unknown) => {
@@ -243,7 +254,16 @@ const loadSettings = async () => {
   const res = await fetchSettings();
   const settings = res?.data?.settings || {};
   settingsForm.value.ebook_library_root = settings.ebook_library_root || "";
+  phpRuntime.value = res?.data?.php_runtime || {};
 };
+
+const phpRuntimeRows = computed(() => [
+  { key: "upload_max_filesize", label: "upload_max_filesize", value: phpRuntime.value.upload_max_filesize || "" },
+  { key: "post_max_size", label: "post_max_size", value: phpRuntime.value.post_max_size || "" },
+  { key: "memory_limit", label: "memory_limit", value: phpRuntime.value.memory_limit || "" },
+  { key: "max_execution_time", label: "max_execution_time", value: phpRuntime.value.max_execution_time || "" },
+  { key: "max_input_time", label: "max_input_time", value: phpRuntime.value.max_input_time || "" },
+]);
 
 watch(
   () => props.preferences,
@@ -371,6 +391,11 @@ const save = async () => {
 .color-row input[type="text"] { width: 140px; }
 .wide-input { width: 100%; min-width: 0; }
 .admin-row { align-items: center; }
+.diagnostics-row { align-items: start; }
+.diagnostics-grid { display:grid; gap:.3rem; font-size:.9rem; }
+.diagnostic-item { display:grid; grid-template-columns: minmax(150px, max-content) 1fr; gap:.75rem; align-items:baseline; }
+.diagnostic-key { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.diagnostic-value { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .logo-row { display:flex; gap:.75rem; align-items:center; flex-wrap: wrap; }
 .logo-preview img { max-height: 80px; border: 1px solid var(--btn-border); border-radius: 6px; padding: 4px; background: #fff; }
 .inline { display:flex; align-items:center; gap:.35rem; }

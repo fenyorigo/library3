@@ -8,7 +8,6 @@ require_admin();
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
 
-ini_set('memory_limit', '512M');
 set_time_limit(600);
 ignore_user_abort(true);
 

@@ -202,6 +202,7 @@ try {
     $force  = !empty($_GET['force']) && $_GET['force'] !== '0';
 
     $pdo = pdo();
+    $repo_health = requireEbookRepositoryAvailable(false);
 
     $status_clause = books_table_has_record_status($pdo) ? "AND b.record_status = 'active'" : "";
     $cover_clause  = $force ? "" : "AND (b.cover_image IS NULL OR b.cover_image = '')";
@@ -325,6 +326,7 @@ try {
             'report'    => $report,
             'csv'       => $report ? ebook_cover_report_csv($report) : '',
             'filename'  => 'ebook_cover_extraction_' . date('Ymd_His') . '.csv',
+            'repository_health' => $repo_health,
         ],
     ]);
 } catch (Throwable $e) {

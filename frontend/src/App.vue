@@ -72,10 +72,11 @@
         <button v-if="isAdmin" class="primary" @click="openAdd">+ Add Book</button>
         <button v-if="isAdmin" @click="openCsvImport">Import books</button>
         <button v-if="isAdmin" @click="onRebuildThumbs">Rebuild thumbs</button>
-        <button v-if="isAdmin" @click="onExtractEbookCovers">Extract ebook covers</button>
-        <button v-if="isAdmin" @click="onBuildEbookSha256">Build missing SHA256 checksums</button>
-        <button v-if="isAdmin" @click="onIncrementalEbookRescan">Incremental ebook repository rescan</button>
-        <button v-if="isAdmin" @click="onFullEbookIntegrityCheck">Full ebook integrity check</button>
+        <button v-if="isAdmin" @click="onCheckEbookRepository" :disabled="repositoryCheckBusy">Check ebook repository</button>
+        <button v-if="isAdmin" @click="onExtractEbookCovers" :disabled="!ebookRepositoryAvailable">Extract ebook covers</button>
+        <button v-if="isAdmin" @click="onBuildEbookSha256" :disabled="!ebookRepositoryAvailable">Build missing SHA256 checksums</button>
+        <button v-if="isAdmin" @click="onIncrementalEbookRescan" :disabled="!ebookRepositoryAvailable">Incremental ebook repository rescan</button>
+        <button v-if="isAdmin" @click="onFullEbookIntegrityCheck" :disabled="!ebookRepositoryAvailable">Full ebook integrity check</button>
         <button
           v-if="isAdmin"
           class="link-btn"
@@ -97,10 +98,13 @@
         <button v-if="isAdmin" @click="openAuthorsMaintenance">Authors</button>
         <button v-if="isAdmin" @click="openUserManagement">Users</button>
         <button v-if="isAdmin" @click="openOrphanMaintenance">Orphan maintenance</button>
-        <button v-if="isAdmin" @click="openEbookOrphanMaintenance">Ebook orphans</button>
+        <button v-if="isAdmin" @click="openEbookOrphanMaintenance" :disabled="!ebookRepositoryAvailable">Ebook orphans</button>
         <button v-if="isAdmin" @click="openDuplicateCandidates">Duplicate candidates</button>
         <button v-if="isAdmin" @click="openAuthLogs">Logs</button>
         <button v-if="isAdmin" class="danger" :disabled="purgeBusy" @click="onPurgeCatalog">Purge catalog</button>
+      </div>
+      <div v-if="isAdmin" class="repo-status" :class="ebookRepositoryAvailable ? 'ok' : 'warn'">
+        <span>{{ ebookRepositoryStatusText }}</span>
       </div>
     </section>
 
@@ -384,6 +388,8 @@ const integrityChecked = ref(0);
 const integrityTotal = ref(0);
 const integrityCounters = ref({});
 const integrityResults = ref({});
+const repositoryCheckBusy = ref(false);
+const ebookRepositoryHealth = ref(null);
 const backupBusy = ref(false);
 const backupBusyMessage = ref("");
 const purgeBusy = ref(false);
@@ -449,6 +455,17 @@ const logoUrl = computed(() => {
 const isAdmin = computed(() => {
   const role = user.value && user.value.role ? String(user.value.role).toLowerCase() : "";
   return role === "admin";
+});
+
+const ebookRepositoryAvailable = computed(() => !!ebookRepositoryHealth.value?.ok);
+const ebookRepositoryStatusText = computed(() => {
+  const health = ebookRepositoryHealth.value;
+  if (repositoryCheckBusy.value) return "Checking ebook repository...";
+  if (!health) return "Ebook repository status not checked.";
+  const message = health.message || "Ebook repository status unknown.";
+  if (!health.ok) return message;
+  const writable = health.writable === false ? " (read-only)" : "";
+  return `${message}${writable}`;
 });
 
 const buildBackupUrl = (endpoint, params = {}) => {
@@ -575,6 +592,49 @@ const ensureAdmin = () => {
     return false;
   }
   return true;
+};
+
+const refreshEbookRepositoryHealth = async ({ writeTest = false, quiet = false } = {}) => {
+  if (!isAdmin.value) return null;
+  repositoryCheckBusy.value = true;
+  try {
+    const url = new URL(apiUrl("ebook_repository_health.php"));
+    if (writeTest) url.searchParams.set("write_test", "1");
+    const res = await fetch(url.toString(), { credentials: "same-origin" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.ok === false) throw new Error(json.error || `HTTP ${res.status}`);
+    ebookRepositoryHealth.value = json.data || null;
+    return ebookRepositoryHealth.value;
+  } catch (err) {
+    ebookRepositoryHealth.value = {
+      ok: false,
+      message: err && err.message ? err.message : "Ebook repository check failed.",
+    };
+    if (!quiet) alert(ebookRepositoryHealth.value.message);
+    return ebookRepositoryHealth.value;
+  } finally {
+    repositoryCheckBusy.value = false;
+  }
+};
+
+const onCheckEbookRepository = async () => {
+  if (!ensureAdmin()) return;
+  const health = await refreshEbookRepositoryHealth({ writeTest: true });
+  if (!health) return;
+  const lines = [health.message || (health.ok ? "Ebook repository OK." : "Ebook repository unavailable.")];
+  if (health.mount_point) lines.push(`Mount point: ${health.mount_point}`);
+  if (health.books_path) lines.push(`Books path: ${health.books_path}`);
+  lines.push(`Readable: ${health.readable ? "yes" : "no"}`);
+  lines.push(`Writable: ${health.writable ? "yes" : "no"}`);
+  lines.push(`Write test: ${health.tmp_write_test || "skipped"}`);
+  alert(lines.join("\n"));
+};
+
+const ensureEbookRepositoryAvailable = () => {
+  if (ebookRepositoryAvailable.value) return true;
+  const message = ebookRepositoryHealth.value?.message || "Ebook repository is not available. Mount the SSD and click Check ebook repository.";
+  alert(message);
+  return false;
 };
 
 const DEFAULT_THEME = {
@@ -964,6 +1024,7 @@ const openOrphanMaintenance = () => {
 
 const openEbookOrphanMaintenance = () => {
   if (!ensureAdmin()) return;
+  if (!ensureEbookRepositoryAvailable()) return;
   showEbookOrphanMaintenance.value = true;
 };
 
@@ -1300,6 +1361,7 @@ const onRebuildThumbs = async () => {
 
 const onExtractEbookCovers = async () => {
   if (!ensureAdmin()) return;
+  if (!ensureEbookRepositoryAvailable()) return;
   if (!confirm("Extract covers from epub/pdf files for books that have no cover yet?")) return;
   extractCoversBusy.value = true;
   extractCoversDone.value = 0;
@@ -1356,6 +1418,7 @@ const onExtractEbookCovers = async () => {
 
 const onBuildEbookSha256 = async () => {
   if (!ensureAdmin()) return;
+  if (!ensureEbookRepositoryAvailable()) return;
   try {
     const checkUrl = apiUrl("build_ebook_sha256.php?check=1");
     const checkRes = await fetch(checkUrl, { credentials: "same-origin" });
@@ -1489,6 +1552,7 @@ const rescanSummaryText = () => {
 
 const onIncrementalEbookRescan = async () => {
   if (!ensureAdmin()) return;
+  if (!ensureEbookRepositoryAvailable()) return;
   try {
     const infoRes = await fetch(apiUrl("rescan_ebook_repository.php"), { credentials: "same-origin" });
     const infoJson = await infoRes.json().catch(() => ({}));
@@ -1650,6 +1714,7 @@ const downloadIntegrityCsv = (filename, csv) => {
 
 const onFullEbookIntegrityCheck = async () => {
   if (!ensureAdmin()) return;
+  if (!ensureEbookRepositoryAvailable()) return;
   try {
     const infoRes = await fetch(apiUrl("check_ebook_integrity.php"), { credentials: "same-origin" });
     const infoJson = await infoRes.json().catch(() => ({}));
@@ -1718,6 +1783,9 @@ const onFullEbookIntegrityCheck = async () => {
 onMounted(async () => {
   applyUrlParams();
   await initAuth();
+  if (isAdmin.value && !ebookRepositoryHealth.value) {
+    await refreshEbookRepositoryHealth({ quiet: true });
+  }
   applyPreferences(preferences.value);
   window.addEventListener("popstate", onPopState);
   window.addEventListener("focus", scheduleSearchScrub);
@@ -1733,9 +1801,11 @@ onBeforeUnmount(() => {
 watch(user, async (next, prev) => {
   if (next && !prev) {
     await loadPreferences();
+    if (isAdmin.value) await refreshEbookRepositoryHealth({ quiet: true });
     reload();
     scheduleSearchScrub();
   } else if (!next) {
+    ebookRepositoryHealth.value = null;
     resetPreferences();
   }
 });
@@ -1842,6 +1912,25 @@ body {
   background: #fff;
 }
 
+.repo-status {
+  margin: 0.55rem auto 0;
+  width: min(980px, 100%);
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  text-align: left;
+  background: rgba(255,255,255,0.45);
+}
+
+.repo-status.ok {
+  border-color: rgba(32, 112, 64, 0.45);
+}
+
+.repo-status.warn {
+  border-color: rgba(168, 38, 47, 0.55);
+}
+
 .inline-filter {
   display: inline-flex;
   align-items: center;
@@ -1879,6 +1968,12 @@ button.danger {
   background: #a8262f;
   border-color: #7e1c23;
   color: #ffffff;
+}
+
+button:disabled,
+.link-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 button.ghost,

@@ -12,7 +12,6 @@ if (!$full_backup_cli_job) {
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
 
-ini_set('memory_limit', '512M');      // or '1G' if you like
 set_time_limit(600);                  // give the backup time
 ignore_user_abort(true);              // keep running if client disconnects
 

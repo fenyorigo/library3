@@ -106,9 +106,9 @@ try {
     }
     $warnings = unicode_path_runtime_warnings();
     if ($warnings) json_fail($warnings[0], 500);
-    $root = getEbookLibraryRoot();
-    $books_root = rtrim($root, '/') . '/Books';
-    if (!is_dir($root) || !is_readable($root)) json_fail('ebook_library_root is not mounted or not readable: ' . $root, 400);
+    $repo_health = requireEbookRepositoryAvailable(false);
+    $root = (string)$repo_health['mount_point'];
+    $books_root = (string)$repo_health['books_path'];
 
     $where = integrity_where($pdo);
     $count_sql = "SELECT COUNT(*) FROM BookCopies bc JOIN Books b ON b.book_id = bc.book_id WHERE {$where}";
@@ -117,6 +117,7 @@ try {
         json_out(['ok' => true, 'data' => [
             'ebook_library_root' => $root,
             'scan_root' => $books_root,
+            'repository_health' => $repo_health,
             'total_copies' => (int)$pdo->query($count_sql)->fetchColumn(),
         ]]);
     }
@@ -144,6 +145,7 @@ try {
             'token' => $token,
             'ebook_library_root' => $root,
             'scan_root' => $books_root,
+            'repository_health' => $repo_health,
             'total_copies' => $session['total_copies'],
             'counters' => $session['counters'],
         ]]);

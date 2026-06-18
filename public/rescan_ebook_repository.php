@@ -1038,14 +1038,12 @@ try {
     $warnings = unicode_path_runtime_warnings();
     if ($warnings) json_fail($warnings[0], 500);
 
-    $root = getEbookLibraryRoot();
-    $books_root = rtrim($root, '/') . '/Books';
-    if (!is_dir($books_root) || !is_readable($books_root)) {
-        json_fail('Ebook scan root is not mounted or not readable: ' . $books_root, 400);
-    }
+    $repo_health = requireEbookRepositoryAvailable(false);
+    $root = (string)$repo_health['mount_point'];
+    $books_root = (string)$repo_health['books_path'];
 
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
-        json_out(['ok' => true, 'data' => ['ebook_library_root' => $root, 'scan_root' => $books_root]]);
+        json_out(['ok' => true, 'data' => ['ebook_library_root' => $root, 'scan_root' => $books_root, 'repository_health' => $repo_health]]);
     }
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') json_fail('Method Not Allowed', 405);
 
@@ -1077,6 +1075,7 @@ try {
             'token' => $token,
             'ebook_library_root' => $root,
             'scan_root' => $books_root,
+            'repository_health' => $repo_health,
             'total_files' => count($files),
             'counters' => $session['counters'],
         ]]);

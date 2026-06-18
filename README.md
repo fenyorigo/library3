@@ -177,7 +177,7 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.5.3**
+Current application version: **3.5.4**
 Current schema version: **3.3.0**
 
 ## Catalog Statistics CSV
@@ -200,11 +200,33 @@ The statistics export follows the currently active list filters, including searc
 
 The report includes overall active/deleted record counts, print and ebook copy counts, ebook format and language breakdowns, SHA256/path health, total ebook file size, and placeholders for integrity/orphan snapshots that are not persisted yet.
 
+## Deployment PHP Limits
+
+Large catalogs can produce large import/export archives. In the current production catalog, ebook-only exports can be around 0.7 GB and full print+ebook exports can exceed 1 GB. Treat PHP upload, POST, and memory limits as deployment configuration owned by the server administrator, not as fixed application logic.
+
+Recommended baseline for large installations:
+
+```ini
+upload_max_filesize = 2048M
+post_max_size = 2048M
+memory_limit = 768M
+```
+
+If PHP-FPM/CGI `user_ini` support is enabled, `public/.user.ini` can override `/etc/php.ini`; check both when diagnosing large import failures. The admin Preferences dialog shows the effective PHP runtime values for `upload_max_filesize`, `post_max_size`, `memory_limit`, `max_execution_time`, and `max_input_time`.
+
 ## Unicode Path Handling
 
 BookCatalog stores ebook copy paths as canonical NFC logical paths under `/Books/...`. On macOS/APFS, the filesystem may report filenames in decomposed/NFD Unicode form even when Finder displays the same visual name. For file access, BookCatalog first tries the exact path and then compares entries in the expected parent directory after canonicalizing both database and filesystem names.
 
 PHP `intl` / `Normalizer` is required for reliable Unicode path handling. Do not force NFC filenames on disk from the application; keep the database canonical and let the resolver map to the filesystem-native path.
+
+## Ebook Repository Availability
+
+`ebook_library_root` is a local machine setting, not portable catalog data. After moving or importing a catalog on another host, configure the mount point for that host and use **Check ebook repository** before running ebook maintenance tools. The check verifies the configured mount point, the `Books` directory below it, readability, and an optional temporary write/read/delete test.
+
+Repository-dependent admin tools are disabled until the current host can read `ebook_library_root + /Books`. This prevents false orphan, missing, or integrity reports when an external SSD is simply not mounted or is mounted at a different path. Normal catalog browsing, CSV import/export, statistics export, print tools, and DB-only tools remain available.
+
+On macOS, APFS/HFS+ filename behavior is handled by BookCatalog's Unicode path resolver. For one external ebook repository shared between macOS and Linux, use exFAT or another filesystem both systems can read and write reliably. If the repository is not mounted on Linux, do not run ebook orphan maintenance, incremental rescan, SHA build, integrity check, or ebook cover extraction.
 
 ## Incremental Ebook Rescan
 

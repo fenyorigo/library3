@@ -1249,6 +1249,89 @@ function getEbookLibraryRoot(): string {
     return normalizeEbookLibraryRoot((string)getSetting('ebook_library_root', '/Volumes/SanDisk 2T'));
 }
 
+function checkEbookRepositoryHealth(bool $write_test = false): array {
+    $mount_point = '';
+    $books_path = '';
+    $readable = false;
+    $writable = false;
+    $tmp_write_test = 'skipped';
+    $message = '';
+
+    try {
+        $mount_point = getEbookLibraryRoot();
+    } catch (Throwable $e) {
+        return [
+            'ok' => false,
+            'mount_point' => '',
+            'books_path' => '',
+            'readable' => false,
+            'writable' => false,
+            'tmp_write_test' => 'skipped',
+            'message' => $e->getMessage(),
+        ];
+    }
+
+    $books_path = rtrim($mount_point, '/') . '/Books';
+    if ($mount_point === '') {
+        $message = 'Ebook mount point is not configured.';
+    } elseif (!is_dir($mount_point)) {
+        $message = 'Configured ebook mount point does not exist on this system: ' . $mount_point;
+    } elseif (!is_dir($books_path)) {
+        $message = 'Ebook repository Books directory does not exist: ' . $books_path;
+    } else {
+        $readable = is_readable($books_path);
+        $writable = is_writable($books_path);
+        if (!$readable) {
+            $message = 'Ebook repository Books directory is not readable: ' . $books_path;
+        } else {
+            $message = 'Ebook repository OK: ' . $mount_point;
+        }
+    }
+
+    if ($write_test && $readable && is_dir($books_path)) {
+        if (!$writable) {
+            $tmp_write_test = 'failed';
+            if ($message === 'Ebook repository OK: ' . $mount_point) {
+                $message = 'Ebook repository is readable but not writable: ' . $books_path;
+            }
+        } else {
+            $tmp = rtrim($books_path, '/') . '/.bookcatalog_write_test_' . bin2hex(random_bytes(6)) . '.tmp';
+            $content = 'bookcatalog repository write test ' . date(DateTimeInterface::ATOM);
+            $ok = false;
+            try {
+                if (@file_put_contents($tmp, $content) !== false) {
+                    $read_back = @file_get_contents($tmp);
+                    $ok = ($read_back === $content);
+                }
+            } finally {
+                if (is_file($tmp)) @unlink($tmp);
+            }
+            $tmp_write_test = $ok ? 'ok' : 'failed';
+            if (!$ok && $message === 'Ebook repository OK: ' . $mount_point) {
+                $message = 'Ebook repository is readable but write test failed: ' . $books_path;
+            }
+        }
+    }
+
+    return [
+        'ok' => $mount_point !== '' && is_dir($mount_point) && is_dir($books_path) && $readable,
+        'mount_point' => $mount_point,
+        'books_path' => $books_path,
+        'readable' => $readable,
+        'writable' => $writable,
+        'tmp_write_test' => $tmp_write_test,
+        'message' => $message,
+    ];
+}
+
+function requireEbookRepositoryAvailable(bool $write_test = false): array {
+    $health = checkEbookRepositoryHealth($write_test);
+    if (empty($health['ok'])) {
+        json_fail((string)($health['message'] ?? 'Ebook repository is unavailable.'), 400, ['repository_health' => $health]);
+    }
+    return $health;
+}
+
 function is_absolute_file_path(string $path): bool {
     return $path !== '' && ($path[0] === '/' || (bool)preg_match('/^[A-Za-z]:[\\\\\/]/', $path));
 }

@@ -12,7 +12,6 @@ if (!$import_cli_job) {
 // Never leak warnings/notices into JSON
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
-ini_set('memory_limit', '512M');
 // Long ZIP restore can exceed proxy/FPM defaults; keep script-side timeout unlimited.
 set_time_limit(0);
 ignore_user_abort(true);

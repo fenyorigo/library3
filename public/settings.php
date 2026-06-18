@@ -7,6 +7,16 @@ require_admin();
 
 header('Content-Type: application/json; charset=utf-8');
 
+function php_runtime_diagnostics(): array {
+    return [
+        'upload_max_filesize' => (string)ini_get('upload_max_filesize'),
+        'post_max_size' => (string)ini_get('post_max_size'),
+        'memory_limit' => (string)ini_get('memory_limit'),
+        'max_execution_time' => (string)ini_get('max_execution_time'),
+        'max_input_time' => (string)ini_get('max_input_time'),
+    ];
+}
+
 try {
     $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 
@@ -17,6 +27,8 @@ try {
                 'settings' => [
                     'ebook_library_root' => getEbookLibraryRoot(),
                 ],
+                'php_runtime' => php_runtime_diagnostics(),
+                'ebook_repository_health' => checkEbookRepositoryHealth(false),
             ],
         ]);
     }
@@ -32,6 +44,8 @@ try {
                 'settings' => [
                     'ebook_library_root' => $root,
                 ],
+                'php_runtime' => php_runtime_diagnostics(),
+                'ebook_repository_health' => checkEbookRepositoryHealth(false),
             ],
         ]);
     }

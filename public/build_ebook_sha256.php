@@ -28,13 +28,8 @@ try {
         json_fail('BookCopies.sha256 column is missing. Run the schema migration first.', 500);
     }
 
-    $root = getEbookLibraryRoot();
-    if ($root === '' || $root[0] !== '/') {
-        json_fail('ebook_library_root is not a valid absolute mount path.', 400);
-    }
-    if (!is_dir($root) || !is_readable($root)) {
-        json_fail('ebook_library_root is not mounted or not readable: ' . $root, 400);
-    }
+    $repo_health = requireEbookRepositoryAvailable(false);
+    $root = (string)$repo_health['mount_point'];
 
     $unicode_warnings = unicode_path_runtime_warnings();
     if ($unicode_warnings) {
@@ -54,6 +49,7 @@ try {
             'ok' => true,
             'data' => [
                 'ebook_library_root' => $root,
+                'repository_health' => $repo_health,
                 'missing_sha256' => (int)$pdo->query($count_sql)->fetchColumn(),
                 'unicode_warnings' => $unicode_warnings,
             ],
@@ -97,6 +93,7 @@ try {
             'ok' => true,
             'data' => [
                 'ebook_library_root' => $root,
+                'repository_health' => $repo_health,
                 'remaining' => (int)$pdo->query($count_sql)->fetchColumn(),
                 'report' => $report,
             ],
@@ -212,6 +209,7 @@ try {
         'ok' => true,
         'data' => [
             'ebook_library_root' => $root,
+            'repository_health' => $repo_health,
             'limit' => $limit,
             'after_copy_id' => $after_copy_id,
             'next_after_copy_id' => $last_copy_id,

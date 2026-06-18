@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.5.3 - 2026-06-18
+## 3.5.4 - 2026-06-18
 
 - Added admin **Catalog statistics CSV** export for audit/support workflows. The report follows the current search, record status, format, and language filters and includes summary counts, print and ebook counts, ebook format/language breakdowns, SHA256/path health, and total ebook file size.
 - Documented the statistics export as a validation aid for full, print-only, and ebook-only export/import tests; it is not an import file.
@@ -11,6 +11,8 @@
 - Fixed ebook cover extraction batching to use a stable `book_id` cursor instead of `OFFSET`, avoiding skipped candidates when newly extracted covers remove rows from the pending set during the run.
 - Changed server-side selected export ZIP generation to use the same asynchronous background-job/polling flow as full backup, avoiding gateway timeout errors for large full/ebook exports.
 - Changed book import to run as an asynchronous background job with UI polling after upload staging, avoiding gateway timeout errors for large CSV/ZIP imports while preserving the existing import result summary.
+- Raised the packaged `.user.ini` large-import baseline to 2048M upload/POST and 768M memory, removed script-level `memory_limit` overrides from import/export/backup code, and added admin PHP runtime diagnostics for effective upload, POST, memory, and timeout settings.
+- Added central ebook repository availability checks, an admin "Check ebook repository" action, visible repository status, UI gating for repository-dependent ebook maintenance actions, and server-side guards to prevent false missing/orphan reports when the configured external repository is not mounted on the current host.
 
 ## 3.5.0 - 2026-06-18
 

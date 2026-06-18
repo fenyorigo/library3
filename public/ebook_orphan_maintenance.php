@@ -250,8 +250,11 @@ function ebook_orphan_soft_delete_rows(PDO $pdo, array $rows): array {
 $pdo = pdo();
 
 try {
+    $repo_health = requireEbookRepositoryAvailable(false);
     if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-        json_out(['ok' => true, 'data' => ebook_orphan_analyze($pdo)]);
+        $analysis = ebook_orphan_analyze($pdo);
+        $analysis['repository_health'] = $repo_health;
+        json_out(['ok' => true, 'data' => $analysis]);
     }
 
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -262,6 +265,7 @@ try {
     $action = (string)($d['action'] ?? '');
     if ($action === 'export_csv') {
         $analysis = ebook_orphan_analyze($pdo);
+        $analysis['repository_health'] = $repo_health;
         json_out(['ok' => true, 'data' => [
             'filename' => 'ebook_orphan_maintenance_' . date('Ymd_His') . '.csv',
             'csv' => ebook_orphan_csv($analysis),
