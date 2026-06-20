@@ -419,6 +419,18 @@ export async function fetchEbookOrphanMaintenance() {
   return getJSON('ebook_orphan_maintenance.php');
 }
 
+export async function startEbookOrphanMaintenanceAnalysis() {
+  return postEbookOrphanMaintenance({ action: 'start_async' });
+}
+
+export async function fetchEbookOrphanMaintenanceStatus(token) {
+  const url = new URL(apiUrl('ebook_orphan_maintenance.php'));
+  url.searchParams.set('action', 'status');
+  url.searchParams.set('token', token);
+  const res = await apiFetch(url.toString(), { credentials: 'same-origin' });
+  return parseJsonResponse(res);
+}
+
 async function postMaintenance(payload) {
   const res = await apiFetch(apiUrl('orphan_maintenance.php'), {
     method: 'POST',

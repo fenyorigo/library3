@@ -84,4 +84,13 @@ $hu_display_author_key = rescan_authors_value([['name' => 'Hegyvári Norbert', '
 $hu_structured_author_key = rescan_authors_value([['name' => 'Hegyvári|Norbert', 'is_hungarian' => 1, 'author_alias' => null]]);
 assert_same($hu_display_author_key, $hu_structured_author_key, 'Hungarian display author and pipe-structured filename author should compare equal.');
 
+
+assert_same(rescan_authors_match([['name' => 'Miklós Zrínyi', 'is_hungarian' => 1, 'author_alias' => null]], [['name' => 'Zrínyi|Miklós', 'is_hungarian' => 1, 'author_alias' => null]]), true, 'Imported display author and Hungarian structured filename author should compare equal even if display order is reversed.');
+
+assert_same(rescan_authors_match([['name' => 'Girard Patrick', 'is_hungarian' => 0, 'author_alias' => null]], [['name' => 'Girard, Patrick', 'is_hungarian' => 0, 'author_alias' => null]]), true, 'Imported display author and foreign structured filename author should compare equal even if display order is reversed.');
+
+$multi_current = [['name' => 'Miklós Zrínyi', 'is_hungarian' => 1, 'author_alias' => null], ['name' => 'Benede Elek', 'is_hungarian' => 1, 'author_alias' => null]];
+$multi_parsed = [['name' => 'Zrínyi|Miklós', 'is_hungarian' => 1, 'author_alias' => null], ['name' => 'Benede|Elek', 'is_hungarian' => 1, 'author_alias' => null]];
+assert_same(rescan_authors_match($multi_current, $multi_parsed), true, 'Multi-author imported display names should match structured Hungarian filename authors.');
+
 echo "rescan replacement matching cases ok\n";

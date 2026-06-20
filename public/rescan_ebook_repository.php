@@ -152,15 +152,24 @@ function rescan_author_name_options(string $name, ?int $flag): array {
         $count = count($parts);
         if ($count === 1) {
             $add('', $parts[0]);
-        } elseif ($flag === 1) {
-            // Hungarian display names are family name first; compound family names are common.
-            for ($split = 1; $split < $count; $split++) {
-                $add(implode(' ', array_slice($parts, $split)), implode(' ', array_slice($parts, 0, $split)));
-            }
         } else {
-            // Foreign display names are given name first; allow compound family names like le Goff or Bentley Hart.
-            for ($split = $count - 1; $split >= 1; $split--) {
-                $add(implode(' ', array_slice($parts, 0, $split)), implode(' ', array_slice($parts, $split)));
+            // Display names can arrive from imports in either display order, while filenames
+            // use structured Family|Given or Family, Given forms. Offer both interpretations
+            // so metadata drift reports are about real changes, not name-order noise.
+            if ($flag === 1) {
+                for ($split = 1; $split < $count; $split++) {
+                    $add(implode(' ', array_slice($parts, $split)), implode(' ', array_slice($parts, 0, $split)));
+                }
+                for ($split = $count - 1; $split >= 1; $split--) {
+                    $add(implode(' ', array_slice($parts, 0, $split)), implode(' ', array_slice($parts, $split)));
+                }
+            } else {
+                for ($split = $count - 1; $split >= 1; $split--) {
+                    $add(implode(' ', array_slice($parts, 0, $split)), implode(' ', array_slice($parts, $split)));
+                }
+                for ($split = 1; $split < $count; $split++) {
+                    $add(implode(' ', array_slice($parts, $split)), implode(' ', array_slice($parts, 0, $split)));
+                }
             }
         }
     }

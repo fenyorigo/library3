@@ -11,7 +11,7 @@
       </header>
 
       <section class="modal-body">
-        <div v-if="loading" class="muted">Loading…</div>
+        <div v-if="loading" class="muted">{{ loadingMessage || 'Loading…' }}</div>
         <template v-else>
           <div class="summary">
             <div><strong>Mount</strong> {{ ebookMountPoint || '—' }}</div>
@@ -107,8 +107,8 @@
 
 <script lang="ts">
 import {
-  fetchEbookOrphanMaintenance,
-  exportEbookOrphanMaintenanceCsv,
+  startEbookOrphanMaintenanceAnalysis,
+  fetchEbookOrphanMaintenanceStatus,
   softDeleteEbookOrphans,
   softDeleteMissingEbookOrphans,
 } from '../api';
@@ -118,7 +118,10 @@ type EbookOrphanRow = {
   book_id: number;
   file_path?: string | null;
   title?: string | null;
+  subtitle?: string | null;
+  series?: string | null;
   authors?: string | null;
+  sha256?: string | null;
 };
 
 type EbookOrphanCandidate = {
@@ -134,6 +137,7 @@ export default {
   data() {
     return {
       loading: false,
+      loadingMessage: '',
       applying: false,
       ebookMountPoint: '',
       summary: {} as Record<string, number>,
@@ -153,19 +157,39 @@ export default {
     errorMessage(err: unknown) {
       return err instanceof Error ? err.message : '';
     },
+    sleep(ms: number) {
+      return new Promise((resolve) => window.setTimeout(resolve, ms));
+    },
+    applyPayload(payload: any) {
+      this.ebookMountPoint = payload.ebook_mount_point || '';
+      this.summary = payload.summary || {};
+      this.candidates = payload.candidates || [];
+      this.missingOnly = payload.missing_only || [];
+    },
     async load() {
       this.loading = true;
+      this.loadingMessage = 'Starting ebook orphan analysis…';
       try {
-        const data = await fetchEbookOrphanMaintenance();
-        const payload = (data && data.data) ? data.data : (data || {});
-        this.ebookMountPoint = payload.ebook_mount_point || '';
-        this.summary = payload.summary || {};
-        this.candidates = payload.candidates || [];
-        this.missingOnly = payload.missing_only || [];
+        const started = await startEbookOrphanMaintenanceAnalysis();
+        const token = started?.token || started?.data?.token;
+        if (!token) throw new Error('Ebook orphan analysis did not return a job token.');
+        this.loadingMessage = 'Ebook orphan analysis is running…';
+        for (;;) {
+          await this.sleep(1500);
+          const status = await fetchEbookOrphanMaintenanceStatus(token);
+          const job = status?.job || {};
+          if (job.status === 'error') throw new Error(job.error || 'Ebook orphan analysis failed.');
+          if (job.status === 'complete') {
+            this.applyPayload(job.data || {});
+            break;
+          }
+          this.loadingMessage = job.message || 'Ebook orphan analysis is running…';
+        }
       } catch (e) {
         alert(this.errorMessage(e) || 'Failed to load ebook orphan maintenance data.');
       } finally {
         this.loading = false;
+        this.loadingMessage = '';
       }
     },
     reasonLabel(reason?: string | null) {
@@ -187,11 +211,29 @@ export default {
       a.remove();
       URL.revokeObjectURL(url);
     },
+    csvCell(value: unknown) {
+      const text = value == null ? '' : String(value);
+      return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    },
+    buildCsv() {
+      const rows: unknown[][] = [[
+        'status', 'reason', 'sha256', 'copy_id', 'book_id', 'file_path', 'title', 'subtitle', 'series', 'authors', 'keep_copy_id', 'keep_book_id', 'keep_file_path',
+      ]];
+      for (const candidate of this.candidates) {
+        for (const row of candidate.delete || []) {
+          rows.push([
+            'soft_delete_candidate', candidate.reason || '', candidate.sha256 || '', row.copy_id || '', row.book_id || '', row.file_path || '', row.title || '', row.subtitle || '', row.series || '', row.authors || '', candidate.keep?.copy_id || '', candidate.keep?.book_id || '', candidate.keep?.file_path || '',
+          ]);
+        }
+      }
+      for (const row of this.missingOnly) {
+        rows.push(['missing_no_replacement', '', row.sha256 || '', row.copy_id || '', row.book_id || '', row.file_path || '', row.title || '', row.subtitle || '', row.series || '', row.authors || '', '', '', '']);
+      }
+      return rows.map((row) => row.map(this.csvCell).join(',')).join('\n') + '\n';
+    },
     async exportCsv() {
       try {
-        const data = await exportEbookOrphanMaintenanceCsv();
-        const payload = (data && data.data) ? data.data : (data || {});
-        if (payload.csv) this.download(payload.filename || 'ebook_orphan_maintenance.csv', payload.csv);
+        this.download(`ebook_orphan_maintenance_${new Date().toISOString().replace(/[-:T]/g, '').slice(0, 15)}.csv`, this.buildCsv());
       } catch (e) {
         alert(this.errorMessage(e) || 'CSV export failed.');
       }

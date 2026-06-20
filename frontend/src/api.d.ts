@@ -23,6 +23,8 @@ export function fetchSettings(): Promise<any>;
 export function updateSettings(payload?: Record<string, unknown>): Promise<any>;
 export function fetchOrphanMaintenance(): Promise<any>;
 export function fetchEbookOrphanMaintenance(): Promise<any>;
+export function startEbookOrphanMaintenanceAnalysis(): Promise<any>;
+export function fetchEbookOrphanMaintenanceStatus(token: string): Promise<any>;
 export function exportEbookOrphanMaintenanceCsv(): Promise<any>;
 export function softDeleteEbookOrphans(items?: any[]): Promise<any>;
 export function softDeleteMissingEbookOrphans(items?: any[]): Promise<any>;

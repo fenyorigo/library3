@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.5.6 - 2026-06-20
+
+- Changed Ebook orphan maintenance analysis to run as an asynchronous background job with UI polling, avoiding gateway timeout errors and preventing stale HTTP 504 responses from poisoning repository health state.
+- Changed Ebook orphan maintenance CSV export to use the already loaded report data instead of rerunning the long backend analysis.
+- Fixed incremental ebook rescan filename metadata false positives after export/purge/import by comparing display author names against structured filename author names in both plausible name orders.
+- Added regression coverage for imported display authors such as Miklos Zrinyi versus Zrinyi|Miklos, foreign structured names such as Girard, Patrick, and multi-author Hungarian filenames.
+
 ## 3.5.5 - 2026-06-20
 
 - Fixed add-book form resets triggered by repository health polling by passing a stable empty book object to the create dialog.
