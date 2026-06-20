@@ -2,6 +2,16 @@
 
 BookCatalog v3 is a PHP and Vue-based personal catalog application for managing **print books and ebooks in one shared catalog**.
 
+## Local Development Note
+
+On the macOS development machine, the active BookCatalog v3 project repository is:
+
+```bash
+~/Projects/library3
+```
+
+The older `~/Projects/library` path belongs to the retired v2 line and should not be used for current v3 work.
+
 It is built on the v2 line, but extends the data model to support:
 
 - mixed print and ebook records
