@@ -1,7 +1,8 @@
 # Changelog
 
-## 3.5.4 - 2026-06-18
+## 3.5.5 - 2026-06-20
 
+- Fixed add-book form resets triggered by repository health polling by passing a stable empty book object to the create dialog.
 - Added admin **Catalog statistics CSV** export for audit/support workflows. The report follows the current search, record status, format, and language filters and includes summary counts, print and ebook counts, ebook format/language breakdowns, SHA256/path health, and total ebook file size.
 - Documented the statistics export as a validation aid for full, print-only, and ebook-only export/import tests; it is not an import file.
 - Fixed selected export filter propagation so `Export selected books (CSV + covers)` honors the active `Print`, `Ebooks`, specific ebook format, and language filters.

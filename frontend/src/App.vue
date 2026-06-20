@@ -143,7 +143,7 @@
     <BookDialog
       v-if="showDialog"
       :mode="dialogMode"
-      :book="selected || {}"
+      :book="selected || emptyBook"
       :can-manage="isAdmin"
       @close="onCloseDialog"
       @switch-edit="onEdit"
@@ -352,6 +352,7 @@ const selectedBook = ref(null);
 const showDialog = ref(false);
 const dialogMode = ref("view");
 const selected = ref(null);
+const emptyBook = Object.freeze({});
 const appVersion = APP_VERSION_DISPLAY;
 const showCsvImport = ref(false);
 const showOrphanMaintenance = ref(false);
