@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.5.7 - 2026-06-26
+
+- Fixed ebook CSV import path normalization when the configured ebook root is a symlink, for example `/data` pointing to `/Users/bajanp/data`. Absolute paths exported through the real target path are now accepted via `realpath()` comparison and stored as canonical `/Books/...` catalog paths instead of being nulled.
+- Added regression coverage for ebook root symlink/realpath aliases in path helper tests.
+
 ## 3.5.6 - 2026-06-20
 
 - Changed Ebook orphan maintenance analysis to run as an asynchronous background job with UI polling, avoiding gateway timeout errors and preventing stale HTTP 504 responses from poisoning repository health state.

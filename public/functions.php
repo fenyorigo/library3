@@ -1367,6 +1367,18 @@ function absoluteToRelativeEbookPath(?string $absolutePath): ?string {
         throw new InvalidArgumentException('Ebook file path points to the mount root, not a file under /Books');
     }
     if (!str_starts_with($path, $root . '/')) {
+        $root_real = realpath($root);
+        $path_real = realpath($path);
+        if (is_string($root_real) && is_string($path_real)) {
+            $root_real = normalize_posix_path_value($root_real) ?? $root_real;
+            $path_real = normalize_posix_path_value($path_real) ?? $path_real;
+            if ($path_real === $root_real) {
+                throw new InvalidArgumentException('Ebook file path points to the mount root, not a file under /Books');
+            }
+            if (str_starts_with($path_real, rtrim($root_real, '/') . '/')) {
+                return normalize_relative_books_path(substr($path_real, strlen(rtrim($root_real, '/'))));
+            }
+        }
         throw new InvalidArgumentException('Ebook file path is outside the configured ebook library root');
     }
 

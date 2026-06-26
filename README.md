@@ -187,7 +187,7 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.5.6**
+Current application version: **3.5.7**
 Current schema version: **3.3.0**
 
 ## Catalog Statistics CSV
