@@ -76,6 +76,7 @@
         <button v-if="isAdmin" @click="onExtractEbookCovers" :disabled="!ebookRepositoryAvailable">Extract ebook covers</button>
         <button v-if="isAdmin" @click="onBuildEbookSha256" :disabled="!ebookRepositoryAvailable">Build missing SHA256 checksums</button>
         <button v-if="isAdmin" @click="onIncrementalEbookRescan" :disabled="!ebookRepositoryAvailable">Incremental ebook repository rescan</button>
+        <button v-if="isAdmin" @click="onCheckEbookLanguageTags" :disabled="!ebookRepositoryAvailable">Check ebook language tags</button>
         <button v-if="isAdmin" @click="onFullEbookIntegrityCheck" :disabled="!ebookRepositoryAvailable">Full ebook integrity check</button>
         <button
           v-if="isAdmin"
@@ -1718,6 +1719,31 @@ const integritySummaryText = () => {
     if (items.length > 8) lines.push(`...and ${items.length - 8} more`);
   }
   return lines.join("\n");
+};
+
+
+const onCheckEbookLanguageTags = async () => {
+  if (!ensureAdmin()) return;
+  if (!ensureEbookRepositoryAvailable()) return;
+  try {
+    const res = await fetch(apiUrl("check_ebook_language_tags.php"), { credentials: "same-origin" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`);
+    const payload = data?.data || {};
+    const problemCount = Number(payload.missing_language_tag || 0) + Number(payload.wrong_language_tag || 0);
+    alert([
+      "Ebook language tag audit completed.",
+      `Checked files: ${payload.checked || 0}`,
+      `OK: ${payload.ok || 0}`,
+      `Missing language tag: ${payload.missing_language_tag || 0}`,
+      `Wrong language tag: ${payload.wrong_language_tag || 0}`,
+    ].join("\n"));
+    if (problemCount > 0 && payload.csv && confirm("Download ebook language tag audit CSV report?")) {
+      downloadIntegrityCsv(payload.filename || "ebook_language_tag_audit.csv", payload.csv);
+    }
+  } catch (err) {
+    alert(err && err.message ? err.message : "Language tag audit failed.");
+  }
 };
 
 const downloadIntegrityCsv = (filename, csv) => {

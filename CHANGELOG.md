@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.5.8 - 2026-06-27
+
+- Added an Import books option to calculate SHA256 checksums for imported ebook copies during import. Print copies are never hashed; imported SHA values are validated, mismatches are reported, and the checksum of the current physical ebook file is stored when calculation is enabled.
+- Added an admin ebook language tag audit that scans repository folders such as `0_HU`, `1_EN`, `2_DE`, and `3_FR` and reports missing or mismatched filename language suffixes like `[hu]`, `[en]`, `[de]`, and `[fr]` with an optional CSV report.
+- Import result summaries now include SHA256 calculation counters and display import warnings in the UI.
+
 ## 3.5.7 - 2026-06-26
 
 - Fixed ebook CSV import path normalization when the configured ebook root is a symlink, for example `/data` pointing to `/Users/bajanp/data`. Absolute paths exported through the real target path are now accepted via `realpath()` comparison and stored as canonical `/Books/...` catalog paths instead of being nulled.

@@ -31,6 +31,11 @@
           </select>
         </label>
 
+        <label class="check-row">
+          <input type="checkbox" v-model="calculateSha256" :disabled="loading" />
+          <span>Calculate SHA256 checksums for imported ebooks</span>
+        </label>
+
         <label class="block">Book ID handling
           <select v-model="idMode" :disabled="loading">
             <option value="keep_ids">Use IDs from import file (DR/full restore)</option>
@@ -44,6 +49,9 @@
             <div><b>Inserted:</b> {{ result.inserted }}</div>
             <div><b>Skipped:</b> {{ result.skipped }}</div>
             <div><b>Dry run:</b> {{ result.dry_run ? 'yes' : 'no' }}</div>
+            <div><b>SHA256 calculated:</b> {{ result.sha256_calculated || 0 }}</div>
+            <div><b>SHA256 missing files:</b> {{ result.sha256_missing_file || 0 }}</div>
+            <div><b>SHA256 mismatches:</b> {{ result.sha256_mismatch || 0 }}</div>
           </div>
           <div v-if="result.id_conflicts && result.id_conflicts.length" class="conflicts">
             <div class="row between">
@@ -53,6 +61,15 @@
             <div class="muted small">
               {{ result.id_conflicts.length }} remapped IDs
             </div>
+          </div>
+
+          <div v-if="result.warnings && result.warnings.length" class="errors">
+            <b>Warnings (sample):</b>
+            <ul>
+              <li v-for="(w, i) in result.warnings" :key="i">
+                line {{ w.line }} — {{ w.warning }}
+              </li>
+            </ul>
           </div>
           <div v-if="result.errors && result.errors.length" class="errors">
             <b>Errors (sample):</b>
@@ -118,12 +135,21 @@ type CsvImportError = {
   error: string;
 };
 
+type CsvImportWarning = {
+  line: number;
+  warning: string;
+};
+
 type CsvImportResult = {
   total: number;
   inserted: number;
   skipped: number;
   dry_run: boolean;
+  sha256_calculated?: number;
+  sha256_missing_file?: number;
+  sha256_mismatch?: number;
   errors?: CsvImportError[];
+  warnings?: CsvImportWarning[];
   id_conflicts?: CsvIdConflict[];
 };
 
@@ -145,6 +171,7 @@ export default {
       showConflicts: false,
       restoreMode: "csv_only",
       idMode: "keep_ids",
+      calculateSha256: false,
       progressMessage: "Import in progress… this may take a few minutes for large bundles.",
     };
   },
@@ -178,6 +205,7 @@ export default {
         fd.append('dry_run', dry ? '1' : '0');
         fd.append('with_covers', this.restoreMode === 'csv_and_covers' ? '1' : '0');
         fd.append('id_mode', this.idMode);
+        fd.append('calculate_sha256', this.calculateSha256 ? '1' : '0');
 
         const res = await fetch(apiUrl("import_csv.php"), {
           method: 'POST',

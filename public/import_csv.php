@@ -363,6 +363,7 @@ if (!$import_cli_job) {
                 'dry_run' => import_parse_bool($_POST, 'dry_run', false) ? '1' : '0',
                 'with_covers' => import_parse_bool($_POST, 'with_covers', false) ? '1' : '0',
                 'id_mode' => trim((string)($_POST['id_mode'] ?? 'keep_ids')),
+                'calculate_sha256' => import_parse_bool($_POST, 'calculate_sha256', false) ? '1' : '0',
             ];
             import_job_write($job_path, [
                 'ok' => true,
@@ -433,6 +434,7 @@ if ($method === 'GET') {
             <input type="file" name="file" accept=".csv,.zip,text/csv,text/plain,application/zip" required>
         </label>
         <label><input type="checkbox" name="with_covers" value="1"> Import covers too (ZIP only, overwrite target cover files)</label>
+        <label><input type="checkbox" name="calculate_sha256" value="1"> Calculate SHA256 checksums for imported ebooks</label>
         <label>ID handling
             <select name="id_mode">
                 <option value="keep_ids">Use IDs from import file</option>
@@ -474,6 +476,7 @@ try {
 
     $dry_run = import_parse_bool($_POST, 'dry_run', false);
     $with_covers = import_parse_bool($_POST, 'with_covers', false);
+    $calculate_sha256 = import_parse_bool($_POST, 'calculate_sha256', false);
     $id_mode = trim((string)($_POST['id_mode'] ?? 'keep_ids'));
     if (!in_array($id_mode, ['keep_ids', 'new_catalog'], true)) {
         json_fail('Invalid id_mode', 400);
@@ -502,6 +505,9 @@ try {
     $id_map = [];
     $covers_copied = 0;
     $covers_missing = 0;
+    $sha256_calculated = 0;
+    $sha256_missing_file = 0;
+    $sha256_mismatch = 0;
 
     $normalize_year = static function ($s) {
         $s = trim((string)$s);
@@ -751,10 +757,34 @@ try {
                     $push_warning($warnings, $total, 'Copy #' . ($copy_idx + 1) . ' file_path ignored: ' . $e->getMessage());
                 }
                 try {
-                    $copy_in['sha256'] = normalize_book_copy_sha256($copy_in['sha256'] ?? null);
+                    $provided_sha256 = normalize_book_copy_sha256($copy_in['sha256'] ?? null);
+                    $copy_in['sha256'] = $provided_sha256;
                 } catch (InvalidArgumentException $e) {
+                    $provided_sha256 = null;
                     $copy_in['sha256'] = null;
                     $push_warning($warnings, $total, 'Copy #' . ($copy_idx + 1) . ' sha256 ignored: ' . $e->getMessage());
+                }
+                if ($calculate_sha256 && !$dry_run && $copy_in['file_path'] !== null) {
+                    $actual_path = resolveFilesystemPath((string)$copy_in['file_path']);
+                    if ($actual_path === null) {
+                        $sha256_missing_file++;
+                        $push_warning($warnings, $total, 'Copy #' . ($copy_idx + 1) . ' sha256 not calculated: ebook file not found');
+                    } else {
+                        $calculated_sha256 = calculateFileSha256($actual_path);
+                        if ($calculated_sha256 === null) {
+                            $sha256_missing_file++;
+                            $push_warning($warnings, $total, 'Copy #' . ($copy_idx + 1) . ' sha256 not calculated: ebook file unreadable');
+                        } else {
+                            if ($provided_sha256 !== null && $provided_sha256 !== $calculated_sha256) {
+                                $sha256_mismatch++;
+                                $push_warning($warnings, $total, 'Copy #' . ($copy_idx + 1) . ' sha256 differs from imported value; stored checksum was calculated from the current ebook file');
+                            }
+                            $copy_in['sha256'] = $calculated_sha256;
+                            $sha256_calculated++;
+                            $size = @filesize($actual_path);
+                            if ($size !== false) $copy_in['file_size'] = max(0, (int)$size);
+                        }
+                    }
                 }
             }
             unset($copy_in);
@@ -1086,6 +1116,7 @@ try {
         'dry_run' => $dry_run,
         'source_kind' => $source_kind,
         'with_covers' => $with_covers,
+        'calculate_sha256' => $calculate_sha256,
         'id_mode' => $id_mode,
         'total' => $total,
         'inserted' => $dry_run ? 0 : $inserted,
@@ -1096,6 +1127,9 @@ try {
         'id_remaps' => $id_map,
         'covers_copied' => $dry_run ? 0 : $covers_copied,
         'covers_missing' => $dry_run ? 0 : $covers_missing,
+        'sha256_calculated' => $dry_run ? 0 : $sha256_calculated,
+        'sha256_missing_file' => $dry_run ? 0 : $sha256_missing_file,
+        'sha256_mismatch' => $dry_run ? 0 : $sha256_mismatch,
         'note' => $note,
     ]);
 } catch (Throwable $e) {
