@@ -41,6 +41,19 @@ assert_same($item['sha256'], $sha, 'SHA256 should be preserved.');
 
 echo "rescan SHA relink classification cases ok\n";
 
+
+$db_known_path = ['by_path' => ['/Books/0_HU/Singh, Simon - Kódkönyv [hu].pdf' => [['copy_id' => 250881]]]];
+$scanned_same_path_new_sha = ['file_path' => '/Books/0_HU/Singh, Simon - Kódkönyv [hu].pdf', 'sha256' => str_repeat('b', 64)];
+assert_same(rescan_scanned_path_exists_in_db($db_known_path, $scanned_same_path_new_sha), true, 'Scanned file with an existing DB path must not be treated as a new file candidate when only SHA differs.');
+
+$missing_csv = rescan_missing_on_disk_csv(['results' => ['missing_on_disk' => [
+    ['copy_id' => 1, 'book_id' => 10, 'title' => 'Missing One', 'file_path' => '/Books/0_HU/Missing One [hu].epub', 'sha256' => str_repeat('c', 64)],
+    ['copy_id' => 2, 'book_id' => 20, 'title' => 'Missing Two', 'file_path' => '/Books/0_HU/Missing Two [hu].epub', 'sha256' => str_repeat('d', 64)],
+]]]);
+assert_same($missing_csv['rows'], 2, 'Missing-on-disk CSV should include every missing row from the backend session.');
+assert_same(str_contains($missing_csv['csv'], 'copy_id,book_id,title,file_path,sha256'), true, 'Missing-on-disk CSV should include the expected header.');
+
+
 $metadata_item = rescan_filename_metadata_mismatch([
     'file_path' => $new_path,
     'absolute_path' => '/Volumes/SanDisk 2T' . $new_path,

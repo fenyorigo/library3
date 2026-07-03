@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.5.9 - 2026-07-03
+
+- Fixed incremental ebook rescan classification so a catalog-known path with changed SHA256 is reported only as `same_path_different_sha`, not also as a new file candidate.
+- Added a complete downloadable CSV report for incremental rescan `missing_on_disk` results, while keeping the modal summary short.
+
 ## 3.5.8 - 2026-06-27
 
 - Added an Import books option to calculate SHA256 checksums for imported ebook copies during import. Print copies are never hashed; imported SHA values are validated, mismatches are reported, and the checksum of the current physical ebook file is stored when calculation is enabled.

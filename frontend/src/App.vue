@@ -1624,6 +1624,12 @@ const onIncrementalEbookRescan = async () => {
       alert(`Duplicate DB SHA groups: ${exported.groups || 0}\nCSV rows: ${exported.rows || 0}`);
     }
 
+    if ((rescanCounters.value.missing_on_disk || 0) > 0 && confirm(`Download missing-on-disk CSV report?\n\nThis is the complete list of catalog ebook copies whose stored path was not found in the repository.`)) {
+      const exported = await rescanPost({ action: "export_missing_on_disk_csv", token });
+      if (exported.csv) downloadIntegrityCsv(exported.filename || "ebook_missing_on_disk.csv", exported.csv);
+      alert(`Missing-on-disk CSV rows: ${exported.rows || 0}`);
+    }
+
     const moved = rescanResults.value.same_sha_path_changed || [];
     if (moved.length && confirm(`Apply ${moved.length} same-SHA path change updates now?\n\nThis only updates BookCopies.file_path, not bibliographic metadata.`)) {
       const applied = await rescanPost({ action: "apply_path_updates", token, items: moved });

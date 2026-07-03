@@ -75,6 +75,11 @@ function rescan_db_indexes(PDO $pdo): array {
     return ['rows' => $rows, 'by_path' => $by_path, 'by_sha' => $by_sha];
 }
 
+function rescan_scanned_path_exists_in_db(array $db, array $record): bool {
+    $path = normalize_book_copy_file_path($record['file_path'] ?? null);
+    return $path !== null && isset($db['by_path'][$path]);
+}
+
 function rescan_change_type(string $old, string $new): array {
     $old_dir = dirname($old);
     $new_dir = dirname($new);
@@ -829,6 +834,35 @@ function rescan_duplicate_sha_database_csv(array $session): array {
     ];
 }
 
+function rescan_missing_on_disk_csv(array $session): array {
+    $headers = [
+        'copy_id', 'book_id', 'title', 'file_path', 'sha256',
+    ];
+    $fh = fopen('php://temp', 'r+');
+    if ($fh === false) throw new RuntimeException('Could not create CSV stream');
+    fputcsv($fh, $headers);
+
+    $rows = 0;
+    foreach (($session['results']['missing_on_disk'] ?? []) as $item) {
+        if (!is_array($item)) continue;
+        fputcsv($fh, [
+            $item['copy_id'] ?? '',
+            $item['book_id'] ?? '',
+            $item['title'] ?? '',
+            $item['file_path'] ?? '',
+            $item['sha256'] ?? '',
+        ]);
+        $rows++;
+    }
+    rewind($fh);
+    $csv = stream_get_contents($fh);
+    fclose($fh);
+    return [
+        'csv' => $csv === false ? '' : $csv,
+        'rows' => $rows,
+    ];
+}
+
 function rescan_path_change_item(array $base, array $copy, string $new_path): array {
     $change = rescan_change_type((string)$copy['file_path'], $new_path);
     $item = $base + [
@@ -1006,6 +1040,7 @@ function rescan_finalize_classification(PDO $pdo, array &$session): array {
         }
         if (isset($db['by_sha'][$sha])) continue;
         foreach ($records as $record) {
+            if (rescan_scanned_path_exists_in_db($db, $record)) continue;
             $item = $record + ['status' => 'new_file_candidate'];
             rescan_store_result($session, 'new_file_candidate', $item);
             $batch_results[] = $item;
@@ -1228,6 +1263,15 @@ try {
             'filename' => 'ebook_duplicate_sha_database_' . date('Ymd_His') . '.csv',
             'csv' => $export['csv'],
             'groups' => $export['groups'],
+            'rows' => $export['rows'],
+        ]]);
+    }
+
+    if ($action === 'export_missing_on_disk_csv') {
+        $export = rescan_missing_on_disk_csv($session);
+        json_out(['ok' => true, 'data' => [
+            'filename' => 'ebook_missing_on_disk_' . date('Ymd_His') . '.csv',
+            'csv' => $export['csv'],
             'rows' => $export['rows'],
         ]]);
     }
