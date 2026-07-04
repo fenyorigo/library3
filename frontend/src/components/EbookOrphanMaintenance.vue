@@ -1,12 +1,12 @@
 <template>
-  <div class="modal-backdrop" @click.self="$emit('close')">
+  <div class="modal-backdrop" @click.self="requestClose">
     <div class="modal" role="dialog" aria-modal="true" aria-label="Ebook orphan maintenance">
       <header class="modal-header">
         <h3>Ebook orphan maintenance</h3>
         <div class="header-actions">
           <button class="ghost" @click="load">Refresh</button>
           <button class="ghost" :disabled="loading" @click="exportCsv">CSV</button>
-          <button class="icon" @click="$emit('close')" aria-label="Close">×</button>
+          <button class="icon" @click="requestClose" aria-label="Close">×</button>
         </div>
       </header>
 
@@ -99,7 +99,7 @@
       </section>
 
       <footer class="modal-footer">
-        <button @click="$emit('close')">Close</button>
+        <button @click="requestClose">Close</button>
       </footer>
     </div>
   </div>
@@ -149,11 +149,28 @@ export default {
     deleteRowCount(): number {
       return this.candidates.reduce((sum, item) => sum + (item.delete || []).length, 0);
     },
+    operationInProgress(): boolean {
+      return this.loading || this.applying;
+    },
   },
   mounted() {
+    window.addEventListener('beforeunload', this.onBeforeUnload);
     this.load();
   },
+  beforeUnmount() {
+    window.removeEventListener('beforeunload', this.onBeforeUnload);
+  },
   methods: {
+    onBeforeUnload(event: BeforeUnloadEvent) {
+      if (!this.operationInProgress) return;
+      event.preventDefault();
+      event.returnValue = '';
+      return '';
+    },
+    requestClose() {
+      if (this.operationInProgress && !confirm('Ebook orphan maintenance is still running. Close this dialog anyway?')) return;
+      this.$emit('close');
+    },
     errorMessage(err: unknown) {
       return err instanceof Error ? err.message : '';
     },

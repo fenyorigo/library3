@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.5.10 - 2026-07-04
+
+- Added browser close/reload protection while long-running catalog operations are active, including ebook scans, SHA builds, cover extraction, backup/export polling, import, purge, and ebook orphan maintenance.
+- Added close guards to Import books and Ebook orphan maintenance dialogs so in-progress jobs are not accidentally hidden without confirmation.
+
 ## 3.5.9 - 2026-07-03
 
 - Fixed incremental ebook rescan classification so a catalog-known path with changed SHA256 is reported only as `same_path_different_sha`, not also as a new file candidate.

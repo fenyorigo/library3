@@ -1,9 +1,9 @@
 <template>
-  <div class="overlay" @click.self="$emit('close')">
+  <div class="overlay" @click.self="requestClose">
     <div class="modal" role="dialog" aria-modal="true" aria-label="Import books">
       <header class="header">
         <h3>Import books</h3>
-        <button class="close" @click="$emit('close')" aria-label="Close">×</button>
+        <button class="close" @click="requestClose" aria-label="Close">×</button>
       </header>
 
       <section class="body">
@@ -83,7 +83,7 @@
       </section>
 
       <footer class="footer">
-        <button @click="$emit('close')" :disabled="loading">Close</button>
+        <button @click="requestClose" :disabled="loading">Close</button>
         <button class="ghost" @click="run(true)" :disabled="loading || !file">Dry run</button>
         <button class="primary" @click="run(false)" :disabled="loading || !file">Import</button>
       </footer>
@@ -163,6 +163,7 @@ type CsvIdConflict = {
 
 export default {
   name: 'CsvImportModal',
+  emits: ['close', 'imported'],
   data() {
     return {
       file: null as File | null,
@@ -180,7 +181,23 @@ export default {
       return this.result?.id_conflicts || [];
     },
   },
+  mounted() {
+    window.addEventListener('beforeunload', this.onBeforeUnload);
+  },
+  beforeUnmount() {
+    window.removeEventListener('beforeunload', this.onBeforeUnload);
+  },
   methods: {
+    onBeforeUnload(event: BeforeUnloadEvent) {
+      if (!this.loading) return;
+      event.preventDefault();
+      event.returnValue = '';
+      return '';
+    },
+    requestClose() {
+      if (this.loading && !confirm('An import is still running. Close this dialog anyway?')) return;
+      this.$emit('close');
+    },
     onPick(e: Event) {
       const input = e.target as HTMLInputElement | null;
       const f = input && input.files ? input.files[0] : null;

@@ -422,6 +422,23 @@ const initialQueryParam = ref(null);
 const searchAutofillTimers = ref([]);
 const repositoryHealthTimer = ref(null);
 
+const longOperationInProgress = computed(() => (
+  rebuildThumbsBusy.value
+  || extractCoversBusy.value
+  || sha256Busy.value
+  || rescanBusy.value
+  || integrityBusy.value
+  || backupBusy.value
+  || purgeBusy.value
+));
+
+const onBeforeUnload = (event) => {
+  if (!longOperationInProgress.value) return;
+  event.preventDefault();
+  event.returnValue = "";
+  return "";
+};
+
 const onUnauthorized = () => {
   rows.value = [];
   total.value = 0;
@@ -1843,12 +1860,14 @@ onMounted(async () => {
   window.addEventListener("popstate", onPopState);
   window.addEventListener("focus", scheduleSearchScrub);
   window.addEventListener("focus", refreshEbookRepositoryHealthQuietly);
+  window.addEventListener("beforeunload", onBeforeUnload);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("popstate", onPopState);
   window.removeEventListener("focus", scheduleSearchScrub);
   window.removeEventListener("focus", refreshEbookRepositoryHealthQuietly);
+  window.removeEventListener("beforeunload", onBeforeUnload);
   stopRepositoryHealthPolling();
   searchAutofillTimers.value.forEach((timer) => window.clearTimeout(timer));
   searchAutofillTimers.value = [];
