@@ -133,6 +133,7 @@
       @duplicate="duplicateFrom"
       @delete="onDelete"
       @restore="onRestore"
+      @download="onDownloadEbook"
     />
 
     <BookDetailModal
@@ -1230,6 +1231,93 @@ const describeCopyForDelete = (copy, index) => {
   if (location) parts.push(location);
   if (filePath) parts.push(filePath);
   return `${index + 1}. ${parts.join(" | ")}`;
+};
+
+const ebookDownloadCopies = (book) => {
+  const copies = Array.isArray(book?.copies) ? book.copies : [];
+  return copies.filter((copy) => {
+    const format = String(copy?.format || "").toLowerCase();
+    const filePath = String(copy?.file_path || "").trim();
+    return copy?.copy_id && format && format !== "print" && filePath;
+  });
+};
+
+const describeCopyForDownload = (copy, index) => {
+  const format = String(copy?.format || "ebook").toUpperCase();
+  const filePath = String(copy?.file_path || "").trim();
+  const fileName = filePath ? filePath.split("/").pop() : `copy #${copy?.copy_id || "?"}`;
+  const size = Number(copy?.file_size || 0);
+  const sizeText = size > 0 ? ` | ${(size / 1048576).toFixed(1)} MB` : "";
+  return `${index + 1}. ${format}${sizeText} | ${fileName}`;
+};
+
+const filenameFromContentDisposition = (header) => {
+  const value = String(header || "");
+  const utf8 = value.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8) {
+    try { return decodeURIComponent(utf8[1]); } catch (_) { return utf8[1]; }
+  }
+  const ascii = value.match(/filename="?([^";]+)"?/i);
+  return ascii ? ascii[1] : "ebook";
+};
+
+const downloadBlob = (filename, blob) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "ebook";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
+const onDownloadEbook = async (book) => {
+  if (!user.value) return;
+  let fullBook = book;
+  try {
+    fullBook = await loadFullBook(book);
+  } catch (e) {
+    if (e && e.status === 401) {
+      handleUnauthorized();
+      return;
+    }
+  }
+
+  const copies = ebookDownloadCopies(fullBook);
+  if (!copies.length) {
+    alert("This book has no downloadable ebook copy.");
+    return;
+  }
+
+  let selected = copies[0];
+  if (copies.length > 1) {
+    const options = copies.map((copy, index) => describeCopyForDownload(copy, index)).join("\n");
+    const choice = prompt(`Choose ebook file to download:\n${options}\n\nEnter copy number. Leave empty to cancel.`, "1");
+    if (choice === null || String(choice).trim() === "") return;
+    const index = Number.parseInt(String(choice).trim(), 10);
+    if (!Number.isFinite(index) || index < 1 || index > copies.length) {
+      alert("Invalid selection.");
+      return;
+    }
+    selected = copies[index - 1];
+  }
+
+  try {
+    const url = new URL(apiUrl("download_ebook.php"));
+    url.searchParams.set("copy_id", String(selected.copy_id));
+    const res = await fetch(url.toString(), { credentials: "same-origin" });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      throw new Error(payload.error || `HTTP ${res.status}`);
+    }
+    const blob = await res.blob();
+    const filename = filenameFromContentDisposition(res.headers.get("Content-Disposition"))
+      || String(selected.file_path || "ebook").split("/").pop();
+    downloadBlob(filename, blob);
+  } catch (e) {
+    alert(e && e.message ? e.message : "Ebook download failed.");
+  }
 };
 
 const onDelete = async (book) => {

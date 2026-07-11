@@ -221,6 +221,7 @@
 
           <td class="actions">
             <button @click="emit('view', b)">View</button>
+            <button v-if="ebookDownloadCopies(b).length" @click="emit('download', b)">Download</button>
             <template v-if="isAdmin">
               <button @click="emit('edit', b)">Edit</button>
               <button @click="emit('duplicate', b)">Duplicate</button>
@@ -288,6 +289,7 @@ const emit = defineEmits([
   "duplicate",
   "delete",
   "restore",
+  "download",
 ]);
 
 const props = defineProps({
@@ -368,6 +370,15 @@ const bookTotalFileSizeMB = (book) => {
   return (total / 1048576).toFixed(1);
 };
 
+const ebookDownloadCopies = (book) => {
+  const copies = Array.isArray(book?.copies) ? book.copies : [];
+  return copies.filter((copy) => {
+    const format = String(copy?.format || "").toLowerCase();
+    const filePath = String(copy?.file_path || "").trim();
+    return format && format !== "print" && filePath;
+  });
+};
+
 const formatHu = (book) => {
   if (!book || !book.authors) return "—";
   if (book.authors_hu_flag === null || book.authors_hu_flag === undefined) return "Mixed";
@@ -439,7 +450,7 @@ thead th {
 .w-year { width: 5rem; white-space: nowrap; }
 .w-status { width: 7.5rem; white-space: nowrap; }
 .w-hu { width: 4rem; white-space: nowrap; text-align: center; }
-.w-actions { width: 11rem; white-space: nowrap; }
+.w-actions { width: 13rem; white-space: normal; }
 
 .w-subtitle,
 .w-series,
@@ -456,7 +467,8 @@ thead th {
 .actions {
   display: flex;
   gap: 0.4rem;
-  white-space: nowrap;
+  flex-wrap: wrap;
+  white-space: normal;
 }
 .actions button {
   background: var(--btn-bg);

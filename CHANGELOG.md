@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.5.11 - 2026-07-11
+
+- Added single ebook download from the book list Actions column for catalog records with downloadable ebook copies.
+- Multiple ebook formats/copies can be selected before download; files are resolved through the configured ebook repository path and Unicode-aware filesystem resolver.
+
 ## 3.5.10 - 2026-07-04
 
 - Added browser close/reload protection while long-running catalog operations are active, including ebook scans, SHA builds, cover extraction, backup/export polling, import, purge, and ebook orphan maintenance.
