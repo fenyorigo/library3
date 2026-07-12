@@ -133,6 +133,7 @@
       @duplicate="duplicateFrom"
       @delete="onDelete"
       @restore="onRestore"
+      @read="onReadEbook"
       @download="onDownloadEbook"
     />
 
@@ -1242,6 +1243,13 @@ const ebookDownloadCopies = (book) => {
   });
 };
 
+const ebookReadableCopies = (book) => {
+  return ebookDownloadCopies(book).filter((copy) => {
+    const format = String(copy?.format || "").toLowerCase();
+    return ["pdf", "epub", "rtf"].includes(format);
+  });
+};
+
 const describeCopyForDownload = (copy, index) => {
   const format = String(copy?.format || "ebook").toUpperCase();
   const filePath = String(copy?.file_path || "").trim();
@@ -1272,6 +1280,39 @@ const downloadBlob = (filename, blob) => {
   URL.revokeObjectURL(url);
 };
 
+const chooseEbookCopy = (copies, actionLabel) => {
+  if (!copies.length) return null;
+  if (copies.length === 1) return copies[0];
+  const options = copies.map((copy, index) => describeCopyForDownload(copy, index)).join("\n");
+  const choice = prompt(`Choose ebook file to ${actionLabel}:\n${options}\n\nEnter copy number. Leave empty to cancel.`, "1");
+  if (choice === null || String(choice).trim() === "") return null;
+  const index = Number.parseInt(String(choice).trim(), 10);
+  if (!Number.isFinite(index) || index < 1 || index > copies.length) {
+    alert("Invalid selection.");
+    return null;
+  }
+  return copies[index - 1];
+};
+
+const onReadEbook = async (book) => {
+  if (!user.value) return;
+  let fullBook = book;
+  try {
+    fullBook = await loadFullBook(book);
+  } catch (e) {
+    if (e && e.status === 401) {
+      handleUnauthorized();
+      return;
+    }
+  }
+
+  const selected = chooseEbookCopy(ebookReadableCopies(fullBook), "read");
+  if (!selected) return;
+  const url = new URL(apiUrl("view_ebook.php"));
+  url.searchParams.set("copy_id", String(selected.copy_id));
+  window.open(url.toString(), "_blank", "noopener");
+};
+
 const onDownloadEbook = async (book) => {
   if (!user.value) return;
   let fullBook = book;
@@ -1290,18 +1331,8 @@ const onDownloadEbook = async (book) => {
     return;
   }
 
-  let selected = copies[0];
-  if (copies.length > 1) {
-    const options = copies.map((copy, index) => describeCopyForDownload(copy, index)).join("\n");
-    const choice = prompt(`Choose ebook file to download:\n${options}\n\nEnter copy number. Leave empty to cancel.`, "1");
-    if (choice === null || String(choice).trim() === "") return;
-    const index = Number.parseInt(String(choice).trim(), 10);
-    if (!Number.isFinite(index) || index < 1 || index > copies.length) {
-      alert("Invalid selection.");
-      return;
-    }
-    selected = copies[index - 1];
-  }
+  const selected = chooseEbookCopy(copies, "download");
+  if (!selected) return;
 
   try {
     const url = new URL(apiUrl("download_ebook.php"));

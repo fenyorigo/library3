@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.6.0 - 2026-07-12
+
+- Added single ebook reading from the book list Actions column for PDF, EPUB, and RTF ebook copies.
+- PDF copies open inline in the browser; EPUB copies open in a simple server-rendered chapter reader with previous/next navigation and resource loading from the EPUB archive.
+- RTF copies show a clear "preview not supported yet" page; MOBI/AZW3 are intentionally excluded from the Read action and remain download-only.
+
 ## 3.5.11 - 2026-07-11
 
 - Added single ebook download from the book list Actions column for catalog records with downloadable ebook copies.

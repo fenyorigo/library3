@@ -221,6 +221,7 @@
 
           <td class="actions">
             <button @click="emit('view', b)">View</button>
+            <button v-if="ebookReadableCopies(b).length" @click="emit('read', b)">Read</button>
             <button v-if="ebookDownloadCopies(b).length" @click="emit('download', b)">Download</button>
             <template v-if="isAdmin">
               <button @click="emit('edit', b)">Edit</button>
@@ -289,6 +290,7 @@ const emit = defineEmits([
   "duplicate",
   "delete",
   "restore",
+  "read",
   "download",
 ]);
 
@@ -376,6 +378,13 @@ const ebookDownloadCopies = (book) => {
     const format = String(copy?.format || "").toLowerCase();
     const filePath = String(copy?.file_path || "").trim();
     return format && format !== "print" && filePath;
+  });
+};
+
+const ebookReadableCopies = (book) => {
+  return ebookDownloadCopies(book).filter((copy) => {
+    const format = String(copy?.format || "").toLowerCase();
+    return ["pdf", "epub", "rtf"].includes(format);
   });
 };
 

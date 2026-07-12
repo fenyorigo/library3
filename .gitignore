@@ -1,7 +1,10 @@
 # PhpStorm / JetBrains project files
 .idea/
 .vscode/
+
+# AI related
 .codex/
+.claude/
 
 # Logs
 *.log
