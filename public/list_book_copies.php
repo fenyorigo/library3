@@ -32,7 +32,7 @@ try {
         'ok' => true,
         'data' => [
             'book_id' => $book_id,
-            'copies' => fetch_book_copies($pdo, $book_id),
+            'copies' => fetch_book_copies($pdo, $book_id, $me['role']==='admin' && ($status==='deleted' || ($_GET['include_deleted']??'')==='1')),
         ],
     ]);
 } catch (Throwable $e) {

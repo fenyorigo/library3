@@ -6,10 +6,10 @@ $me = require_login();
 ini_set('display_errors', '0');
 
 function documentation_copy(PDO $db, int $id, array $me, bool $lock = false): array {
-    $s = $db->prepare('SELECT bc.*, b.record_status FROM BookCopies bc JOIN Books b ON b.book_id=bc.book_id WHERE bc.copy_id=?' . ($lock ? ' FOR UPDATE' : ''));
+    $s = $db->prepare('SELECT bc.*, bc.record_status copy_status, b.record_status FROM BookCopies bc JOIN Books b ON b.book_id=bc.book_id WHERE bc.copy_id=?' . ($lock ? ' FOR UPDATE' : ''));
     $s->execute([$id]);
     $r = $s->fetch(PDO::FETCH_ASSOC);
-    if (!$r || ($r['record_status'] === 'deleted' && $me['role'] !== 'admin')) throw new RuntimeException('Copy not found', 404);
+    if (!$r || (($r['record_status'] === 'deleted' || $r['copy_status']==='deleted') && $me['role'] !== 'admin')) throw new RuntimeException('Copy not found', 404);
     return $r;
 }
 
@@ -43,7 +43,7 @@ try {
             documentation_copy($db,(int)$row['copy_id'],$me);
         } else {
             $id=(int)($_GET['document_id']??0);
-            $s=$db->prepare('SELECT d.* FROM AcquisitionDocuments d JOIN BookCopyAcquisitionDocuments l ON l.document_id=d.document_id JOIN BookCopies c ON c.copy_id=l.copy_id JOIN Books b ON b.book_id=c.book_id WHERE d.document_id=? AND (b.record_status=\'active\' OR ?=\'admin\') LIMIT 1');
+            $s=$db->prepare('SELECT d.* FROM AcquisitionDocuments d JOIN BookCopyAcquisitionDocuments l ON l.document_id=d.document_id JOIN BookCopies c ON c.copy_id=l.copy_id JOIN Books b ON b.book_id=c.book_id WHERE d.document_id=? AND ((b.record_status=\'active\' AND c.record_status=\'active\' AND l.record_status=\'active\') OR ?=\'admin\') LIMIT 1');
             $s->execute([$id,$me['role']]); $row=$s->fetch(PDO::FETCH_ASSOC);
             if (!$row) throw new RuntimeException('Document not found',404);
         }
@@ -71,6 +71,7 @@ try {
     require_admin();
     $db->beginTransaction();
     $copy=documentation_copy($db,$copy_id,$me,true);
+    if ($copy['record_status']==='deleted' || $copy['copy_status']==='deleted') throw new RuntimeException('Restore this book/copy before changing documentation.',409);
     if ($copy['format']!=='print' || (int)$copy['quantity']!==1) throw new RuntimeException('Documentation requires a saved individual print copy (quantity 1).',409);
     $action=$_POST['action']??'';
     if ($action==='photo') {
@@ -104,6 +105,7 @@ try {
         $s=$db->prepare('UPDATE AcquisitionDocuments d JOIN BookCopyAcquisitionDocuments l ON l.document_id=d.document_id SET d.original_location=?, d.updated_at=CURRENT_TIMESTAMP WHERE l.copy_id=? AND d.document_id=?');
         $s->execute([trim($_POST['original_location']??'')?:null,$copy_id,(int)($_POST['document_id']??0)]);
     } else throw new RuntimeException('Unknown action.',400);
+    catalog_evidence_sync($db);
     $db->commit(); $stored=null;
     json_out(['ok'=>true,'data'=>['copy_id'=>$copy_id]]);
 } catch (Throwable $e) {

@@ -120,7 +120,7 @@ try {
     $authors_detail = $authors_metadata_map[$id] ?? [];
     $row['authors_detail'] = $authors_detail;
     $row['authors_metadata_json'] = build_authors_metadata_json($authors_detail);
-    $row['copies'] = fetch_book_copies($pdo, $id);
+    $row['copies'] = fetch_book_copies($pdo, $id, $record_status === 'deleted');
     $row['copy_count'] = total_book_copy_quantity($row['copies'], (int)($row['copy_count'] ?? 1));
     $row['format_summary'] = summarize_book_formats($row['copies']);
 

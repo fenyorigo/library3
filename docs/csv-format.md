@@ -325,3 +325,13 @@ The additional JSON columns archive data, not image/PDF bytes. Current valuation
 fields/sources can be loaded through **Import valuations** after restoring books
 with preserved IDs. Ordinary book import does not restore enrichment automatically;
 full history and physical-copy attachment restoration use SQL plus private files.
+
+
+### Portable ZIP in 3.9.0
+
+Selected export and Full backup now include all referenced cover, condition-photo
+and invoice/PDF files together with a restorable metadata manifest. Use the entire
+ZIP in Import books with Keep IDs, preferably into an empty catalog; CSV alone
+still cannot restore binary files. See [portable-archives.md](portable-archives.md).
+Apply migration 07 for schema 3.6.0 before importing. Archived records and their
+shared links are preserved. Ebook repository files remain a separate transfer.

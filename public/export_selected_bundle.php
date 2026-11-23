@@ -126,6 +126,7 @@ if (!$selected_export_cli_job && $server_side) {
         }
         $cmd = implode(' ', $env_parts)
             . ' ' . escapeshellarg(selected_export_cli_binary())
+                . ' -d ' . escapeshellarg('memory_limit=' . ini_get('memory_limit'))
             . ' ' . escapeshellarg(__FILE__)
             . ' > ' . escapeshellarg($log_path)
             . ' 2>&1 &';
@@ -284,13 +285,13 @@ if (books_table_has_record_status($pdo)) {
 if ($format_filter === 'ebooks') {
     $where_chunks[] = "EXISTS (
         SELECT 1 FROM BookCopies bcf
-        WHERE bcf.book_id = b.book_id
+        WHERE bcf.book_id = b.book_id AND (bcf.record_status='active' OR b.record_status='deleted')
           AND bcf.format <> 'print'
     )";
 } elseif ($format_filter !== '') {
     $where_chunks[] = "EXISTS (
         SELECT 1 FROM BookCopies bcf
-        WHERE bcf.book_id = b.book_id
+        WHERE bcf.book_id = b.book_id AND (bcf.record_status='active' OR b.record_status='deleted')
           AND bcf.format = :format_filter
     )";
     $params['format_filter'] = $format_filter;
@@ -354,7 +355,7 @@ foreach ($params as $k => $v) $st->bindValue(':' . $k, $v, PDO::PARAM_STR);
 $st->execute();
 $rows = $st->fetchAll(PDO::FETCH_ASSOC);
 $book_ids = array_map(static fn (array $row): int => (int)$row['id'], $rows);
-$copy_map = fetch_book_copies_map($pdo, $book_ids);
+$copy_map = fetch_book_copies_map($pdo, $book_ids, true);
 $authors_metadata_map = fetch_book_authors_metadata_map($pdo, $book_ids);
 $print_enrichment = print_enrichment_csv_map($pdo, $copy_map);
 $book_count = count($rows);
@@ -398,6 +399,7 @@ fputcsv($csv, [
 ], ',', '"', '');
 foreach ($rows as $r) {
     $copies = $copy_map[(int)$r['id']] ?? [];
+    if (($r['record_status']??'active')==='active') $copies=array_values(array_filter($copies,fn($copy)=>$copy['record_status']==='active'));
     $authors_metadata_json = build_authors_metadata_json($authors_metadata_map[(int)$r['id']] ?? []);
     $cover_fn = $r['cover_image'] ? basename((string)$r['cover_image']) : '';
     $line = [
@@ -492,6 +494,8 @@ Includes:
 - uploads/default-cover.jpg or uploads/default_cover.jpg (if present)
 TXT;
 $zip->addFromString('README.txt', $readme);
+portable_add_to_zip($zip,$pdo,$book_ids);
+
 $zip->close();
 
 @unlink($csv_path);

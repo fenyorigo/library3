@@ -96,3 +96,13 @@ tesztadatbázison ellenőriztük: a könyvek, példányok, fotó/számlakapcsola
 értékelések és árforrások soronkénti ellenőrzőösszege egyezett. Ez a Macen
 végzett visszaállítási próba; a Fedora-oldali jogosultságokat, adatbázisverziót
 és tényleges működést a célgépen is ellenőrizni kell.
+
+
+### Portable ZIP in 3.9.0
+
+Selected export and Full backup now include all referenced cover, condition-photo
+and invoice/PDF files together with a restorable metadata manifest. Use the entire
+ZIP in Import books with Keep IDs, preferably into an empty catalog; CSV alone
+still cannot restore binary files. See [portable-archives.md](portable-archives.md).
+Apply migration 07 for schema 3.6.0 before importing. Archived records and their
+shared links are preserved. Ebook repository files remain a separate transfer.

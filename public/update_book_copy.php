@@ -28,6 +28,7 @@ try {
     $sel->execute([$copy_id]);
     $row = $sel->fetch(PDO::FETCH_ASSOC);
     $book_id = (int)($row['book_id'] ?? 0);
+    if ((string)$pdo->query('SELECT record_status FROM BookCopies WHERE copy_id='.(int)$copy_id)->fetchColumn()==='deleted') json_fail('Restore this archived copy before editing.',409);
     if ($book_id <= 0) {
         json_fail('Copy not found', 404);
     }
@@ -36,27 +37,10 @@ try {
     }
 
     $pdo->beginTransaction();
-    $sets = ['format = ?', 'quantity = ?', 'physical_location = ?', 'file_path = ?'];
-    $params = [
-        $copy['format'],
-        $copy['quantity'],
-        $copy['physical_location'],
-        $copy['file_path'],
-    ];
-    if (bookcopies_has_file_size($pdo)) {
-        $sets[] = 'file_size = ?';
-        $params[] = $copy['file_size'];
-    }
-    if (bookcopies_has_sha256($pdo)) {
-        $sets[] = 'sha256 = ?';
-        $params[] = $copy['sha256'];
-    }
-    $sets[] = 'notes = ?';
-    $sets[] = 'updated_at = CURRENT_TIMESTAMP';
-    $params[] = $copy['notes'];
-    $params[] = $copy_id;
-    $upd = $pdo->prepare('UPDATE BookCopies SET ' . implode(', ', $sets) . ' WHERE copy_id = ?');
-    $upd->execute($params);
+    $copies=fetch_book_copies($pdo,$book_id);
+    foreach ($copies as &$existing) if ((int)$existing['copy_id']===$copy_id) $existing=array_merge($copy,['copy_id'=>$copy_id]);
+    unset($existing);
+    replace_book_copies($pdo,$book_id,$copies);
 
     $sync = sync_book_copy_derived_fields($pdo, $book_id);
     $pdo->commit();

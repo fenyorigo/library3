@@ -7,7 +7,9 @@ $db=new PDO($dsn,getenv('LIBRARY3_SCHEMA_TEST_USER')?:'root',getenv('LIBRARY3_SC
 if (!preg_match('/^library3_schema_test[a-zA-Z0-9_]*$/D',(string)$db->query('SELECT DATABASE()')->fetchColumn())) throw new RuntimeException('Use a disposable test database after valuation_import.php.');
 function pcheck(bool $ok,string $message): void {if (!$ok) throw new RuntimeException($message);}
 // valuation_import.php prepares these three synthetic records and shared observations.
-$db->exec("INSERT INTO BookCopies (copy_id,book_id,format,quantity) VALUES (10001,10001,'epub',1),(10002,10002,'print',1),(10003,10000,'epub',1)");
+$db->exec("INSERT INTO BookCopies (copy_id,book_id,format,quantity) VALUES (10003,10000,'epub',1)");
+$db->exec("UPDATE BookCopies SET format='epub' WHERE book_id=10001");
+catalog_evidence_sync($db);
 $note='Invoice "quoted" C:\\paper\\';
 $db->prepare('UPDATE AcquisitionDocuments SET notes=? WHERE document_id=1')->execute([$note]);
 $copies=fetch_book_copies_map($db,[10000,10001,10002]);

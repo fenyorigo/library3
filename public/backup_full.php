@@ -124,6 +124,7 @@ if (!$full_backup_cli_job && $server_side) {
         }
         $cmd = implode(' ', $env_parts)
             . ' ' . escapeshellarg(full_backup_cli_binary())
+                . ' -d ' . escapeshellarg('memory_limit=' . ini_get('memory_limit'))
             . ' ' . escapeshellarg(__FILE__)
             . ' > ' . escapeshellarg($log_path)
             . ' 2>&1 &';
@@ -217,7 +218,7 @@ try {
     $publishers = $pdo->query("SELECT publisher_id, name FROM Publishers ORDER BY publisher_id")->fetchAll(PDO::FETCH_ASSOC);
     $subjects = $pdo->query("SELECT subject_id, name FROM Subjects ORDER BY subject_id")->fetchAll(PDO::FETCH_ASSOC);
     if (bookcopies_table_exists($pdo)) {
-        $book_copies_cols = 'copy_id, book_id, format, quantity, physical_location, file_path'
+        $book_copies_cols = 'copy_id, book_id, format, quantity, physical_location, file_path, record_status, deleted_with_book'
             . (bookcopies_has_file_size($pdo) ? ', file_size' : ', 0 AS file_size')
             . (bookcopies_has_sha256($pdo) ? ', sha256' : ', NULL AS sha256')
             . ', notes, created_at, updated_at';
@@ -256,6 +257,7 @@ $csv_books_rows       = array_map(function($b) use ($book_copies_map, $print_enr
         $cover_file = end($parts);
     }
     $copies = $book_copies_map[(int)$b['id']] ?? [];
+    if (($b['record_status']??'active')==='active') $copies=array_values(array_filter($copies,fn($copy)=>$copy['record_status']==='active'));
     return array_merge([
         'id'             => $b['id'],
         'title'          => $b['title'],
@@ -283,7 +285,7 @@ $csv_books_path       = write_csv($csv_books_rows, $csv_books_header);
 $csv_authors_path     = write_csv($authors,      ['author_id','first_name','last_name','sort_name']);
 $csv_publishers_path  = write_csv($publishers,   ['publisher_id','name']);
 $csv_subjects_path    = write_csv($subjects,     ['subject_id','name']);
-$csv_bookcopies_path  = write_csv($book_copies,  ['copy_id','book_id','format','quantity','physical_location','file_path','file_size','sha256','notes','created_at','updated_at']);
+$csv_bookcopies_path  = write_csv($book_copies,  ['record_status','deleted_with_book','copy_id','book_id','format','quantity','physical_location','file_path','file_size','sha256','notes','created_at','updated_at']);
 $csv_ba_path          = write_csv($books_authors, ['book_id','author_id','author_ord','author_alias']);
 $csv_bs_path          = write_csv($books_subjects,['book_id','subject_id']);
 
@@ -452,7 +454,7 @@ if ($copy_documentation) {
             $sha($abs, $archive_path); $packaged[$rel] = true;
         }
     }
-    $zip->addFromString('COPY-DOCUMENTATION-RESTORE.txt', "Copy documentation manifest uses the original copy_id and document_id values.\nThe CSV importer does NOT restore this section.\nFor transfer use a full SQL dump preserving IDs and copy the private-attachments directory.\nFiles in copy-attachments/ belong in the configured private attachment root, outside public/.\n");
+    $zip->addFromString('COPY-DOCUMENTATION-RESTORE.txt', "Copy documentation manifest uses the original copy_id and document_id values.\nImport this complete ZIP through Import books to restore this section.\nFor transfer use a full SQL dump preserving IDs and copy the private-attachments directory.\nFiles in copy-attachments/ belong in the configured private attachment root, outside public/.\n");
 }
 
 // Valuation history is backed up independently of the flat book CSV.
@@ -464,11 +466,13 @@ if (table_column_exists($pdo, 'BookAssessments', 'assessment_id')) {
     $manifest = json_encode($valuations, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
     $zip->addFromString('data/valuations.json', $manifest);
     $checksums[] = hash('sha256', $manifest) . '  data/valuations.json';
-    $zip->addFromString('VALUATIONS-RESTORE.txt', "Valuation imports, history, observations and source links use original book IDs.\nThe ordinary book CSV importer does not restore this section.\nTransfer the complete SQL dump preserving IDs; alternatively use the dedicated valuation CSV importer with source details.\n");
+    $zip->addFromString('VALUATIONS-RESTORE.txt', "Valuation imports, history, observations and source links use original book IDs.\nImport this complete ZIP through Import books to restore this section.\nTransfer the complete SQL dump preserving IDs; alternatively use the dedicated valuation CSV importer with source details.\n");
 }
 
 // finally add sha256s.txt to ZIP
 $zip->addFromString('sha256sums.txt', implode("\n", $checksums) . "\n");
+
+portable_add_to_zip($zip,$pdo,$pdo->query('SELECT book_id FROM Books ORDER BY book_id')->fetchAll(PDO::FETCH_COLUMN));
 
 $zip->close();
 

@@ -55,7 +55,7 @@ function rescan_cleanup_old(): void {
 }
 
 function rescan_db_indexes(PDO $pdo): array {
-    $rows = $pdo->query("\n        SELECT bc.copy_id, bc.book_id, bc.format, bc.file_path, bc.file_size, bc.sha256,\n               b.title, b.subtitle, b.series, b.language\n        FROM BookCopies bc\n        JOIN Books b ON b.book_id = bc.book_id\n        WHERE bc.file_path IS NOT NULL\n          AND TRIM(bc.file_path) <> ''\n          AND bc.format <> 'print'\n          " . (books_table_has_record_status($pdo) ? "AND b.record_status = 'active'" : '') . "\n        ORDER BY bc.copy_id ASC\n    ")->fetchAll(PDO::FETCH_ASSOC);
+    $rows = $pdo->query("\n        SELECT bc.copy_id, bc.book_id, bc.format, bc.file_path, bc.file_size, bc.sha256,\n               b.title, b.subtitle, b.series, b.language\n        FROM BookCopies bc\n        JOIN Books b ON b.book_id = bc.book_id\n        WHERE bc.file_path IS NOT NULL\n          AND TRIM(bc.file_path) <> ''\n          AND bc.format <> 'print' AND bc.record_status='active'\n          " . (books_table_has_record_status($pdo) ? "AND b.record_status = 'active'" : '') . "\n        ORDER BY bc.copy_id ASC\n    ")->fetchAll(PDO::FETCH_ASSOC);
 
     $by_path = [];
     $by_sha = [];
@@ -1056,7 +1056,7 @@ function rescan_mark_replaced_missing_deleted(PDO $pdo, array $items): array {
     }
     $updated = 0;
     $warnings = [];
-    $st = $pdo->prepare("UPDATE Books SET record_status = 'deleted' WHERE book_id = ? AND record_status = 'active'");
+    $st = $pdo->prepare("SELECT book_id FROM Books WHERE book_id = ? AND record_status = 'active'");
     foreach ($items as $index => $item) {
         if (!is_array($item)) continue;
         $book_id = (int)($item['book_id'] ?? 0);
@@ -1065,7 +1065,7 @@ function rescan_mark_replaced_missing_deleted(PDO $pdo, array $items): array {
             continue;
         }
         $st->execute([$book_id]);
-        $updated += $st->rowCount();
+        if ($st->fetchColumn()) { catalog_retire_book($pdo,$book_id); $updated++; }
     }
     return ['updated' => $updated, 'warnings' => $warnings];
 }

@@ -42,7 +42,7 @@ if ($q !== '') {
             . "b.lccn LIKE :t{$i}_lccn OR "
             . "b.notes LIKE :t{$i}_notes OR "
             . "p.name LIKE :t{$i}_pub OR "
-            . "EXISTS (SELECT 1 FROM BookCopies bcq WHERE bcq.book_id = b.book_id AND bcq.format LIKE :t{$i}_format) OR "
+            . "EXISTS (SELECT 1 FROM BookCopies bcq WHERE bcq.book_id = b.book_id AND (bcq.record_status='active' OR b.record_status='deleted') AND bcq.format LIKE :t{$i}_format) OR "
             . "EXISTS ("
             . "  SELECT 1 FROM Books_Authors ba "
             . "  JOIN Authors a ON a.author_id = ba.author_id "
@@ -63,9 +63,9 @@ if ($q !== '') {
 }
 
 if ($format_filter === 'ebooks') {
-    $where_chunks[] = "EXISTS (SELECT 1 FROM BookCopies bcf WHERE bcf.book_id = b.book_id AND bcf.format <> 'print')";
+    $where_chunks[] = "EXISTS (SELECT 1 FROM BookCopies bcf WHERE bcf.book_id = b.book_id AND (bcf.record_status='active' OR b.record_status='deleted') AND bcf.format <> 'print')";
 } elseif ($format_filter !== '') {
-    $where_chunks[] = "EXISTS (SELECT 1 FROM BookCopies bcf WHERE bcf.book_id = b.book_id AND bcf.format = :format_filter)";
+    $where_chunks[] = "EXISTS (SELECT 1 FROM BookCopies bcf WHERE bcf.book_id = b.book_id AND (bcf.record_status='active' OR b.record_status='deleted') AND bcf.format = :format_filter)";
     $params['format_filter'] = $format_filter;
 }
 
@@ -85,7 +85,7 @@ if (books_table_has_record_status($pdo)) {
 try { valuation_add_filter($pdo, $where_chunks, $params); } catch (InvalidArgumentException $e) { json_fail($e->getMessage(), 400); }
 $where_sql = $where_chunks ? ('WHERE ' . implode(' AND ', $where_chunks)) : '';
 $book_from = "FROM Books b LEFT JOIN Publishers p ON p.publisher_id = b.publisher_id {$where_sql}";
-$copy_from = "FROM BookCopies bc JOIN Books b ON b.book_id = bc.book_id LEFT JOIN Publishers p ON p.publisher_id = b.publisher_id {$where_sql}";
+$copy_from = "FROM BookCopies bc JOIN Books b ON b.book_id = bc.book_id AND (bc.record_status='active' OR b.record_status='deleted') LEFT JOIN Publishers p ON p.publisher_id = b.publisher_id {$where_sql}";
 
 $bind = static function (PDOStatement $st) use ($params): void {
     foreach ($params as $key => $value) {

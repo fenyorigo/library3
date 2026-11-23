@@ -14,10 +14,10 @@
 
         <p class="muted small">
           Supported formats: <code>books_export.csv</code> or ZIP bundle from
-          <code>Export selected books (CSV + covers)</code>.
+          <code>Export selected books (CSV + images/PDFs)</code>.
         </p>
 
-        <p class="muted small">Valuation columns are restored separately with “Import valuations” after importing books with preserved IDs. Condition-photo/PDF metadata in CSV does not include the files; full SQL and private attachments remain the migration backup.</p>
+        <p class="muted small">A portable ZIP from selected export or Full backup restores valuation history, condition photos and invoice PDFs together. Choose Keep IDs; all packaged files are restored automatically. CSV alone contains metadata only; its valuation columns use Import valuations.</p>
 
         <label class="block">Import File
           <input type="file"
@@ -46,10 +46,12 @@
         </label>
 
         <div v-if="result" class="panel">
+          <p v-if="result.note">{{ result.note }}</p>
           <div class="grid2">
             <div><b>Total lines:</b> {{ result.total }}</div>
             <div><b>Inserted:</b> {{ result.inserted }}</div>
-            <div><b>Skipped:</b> {{ result.skipped }}</div>
+            <div><b>Skipped:</b> {{ result.skipped || 0 }}</div>
+            <div v-if="result.source_kind === 'portable_zip'"><b>Reused records:</b> {{ result.reused }} · <b>Files:</b> {{ result.files }}</div>
             <div><b>Dry run:</b> {{ result.dry_run ? 'yes' : 'no' }}</div>
             <div><b>SHA256 calculated:</b> {{ result.sha256_calculated || 0 }}</div>
             <div><b>SHA256 missing files:</b> {{ result.sha256_missing_file || 0 }}</div>
@@ -145,6 +147,10 @@ type CsvImportWarning = {
 type CsvImportResult = {
   total: number;
   inserted: number;
+  note?: string;
+  source_kind?: string;
+  reused?: number;
+  files?: number;
   skipped: number;
   dry_run: boolean;
   sha256_calculated?: number;

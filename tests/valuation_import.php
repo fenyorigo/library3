@@ -26,11 +26,14 @@ $db->exec("INSERT INTO Books (book_id,title) VALUES (10000,'TEST Verne'),(10001,
 $db->exec("INSERT INTO BookCopies (copy_id,book_id,format,quantity,notes) VALUES (10000,10000,'print',1,'Keep original copy')");
 $db->exec("INSERT INTO BookCopyPhotos (copy_id,slot_number,file_path,mime_type) VALUES (10000,1,'00000000000000000000000000000000.jpg','image/jpeg')");
 $db->exec("INSERT INTO AcquisitionDocuments (document_id,title,original_location) VALUES (1,'TEST existing invoice','In the book')");
-$db->exec('INSERT INTO BookCopyAcquisitionDocuments VALUES (10000,1,NULL,NULL)');
+$db->exec('INSERT INTO BookCopyAcquisitionDocuments(copy_id,document_id,item_reference,notes) VALUES (10000,1,NULL,NULL)');
+$db->exec("INSERT INTO BookCopies(copy_id,book_id,format,quantity) VALUES(20001,10001,'print',1),(20002,10002,'print',1)");
 $before=$db->query('SELECT * FROM BookCopies')->fetchAll(PDO::FETCH_ASSOC);
 vscript($db,$root.'/00-basedata/sql/migrations/06_v3_add_book_valuations.sql');
+vscript($db,$root.'/00-basedata/sql/migrations/07_v3_add_evidence_lifecycle.sql');
 vcheck(vstruct($db)===$fresh,'Migration and fresh schema differ.');
 vscript($db,$root.'/00-basedata/sql/migrations/06_v3_add_book_valuations.sql');
+vscript($db,$root.'/00-basedata/sql/migrations/07_v3_add_evidence_lifecycle.sql');
 vcheck($db->query('SELECT * FROM BookCopies')->fetchAll(PDO::FETCH_ASSOC)===$before,'Migration touched copies.');
 $source=fn($key,$price,$currency,$kind,$ids)=>['source_id'=>$key,'title'=>'TEST '.$key,'price'=>$price,'currency'=>$currency,'kind'=>$kind,'ids'=>$ids,'checked'=>'2026-11-23'];
 $old=$source('TEST_OLD',900,'HUF','Historical purchase, not current market value',['10000']);

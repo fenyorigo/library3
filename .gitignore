@@ -25,6 +25,7 @@ cookies.txt
 !00-basedata/sql/schema.sql
 !00-basedata/sql/migrations/05_v3_add_copy_photos_and_acquisition_documents.sql
 !00-basedata/sql/migrations/06_v3_add_book_valuations.sql
+!00-basedata/sql/migrations/07_v3_add_evidence_lifecycle.sql
 *.tgz
 
 # Runtime / OS noise

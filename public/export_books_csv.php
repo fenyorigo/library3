@@ -236,7 +236,7 @@ try {
     $st->execute();
     $rows = $st->fetchAll(PDO::FETCH_ASSOC);
     $book_ids = array_map(static fn (array $row): int => (int)$row['id'], $rows);
-    $copy_map = fetch_book_copies_map($pdo, $book_ids);
+    $copy_map = fetch_book_copies_map($pdo, $book_ids, true);
     $authors_metadata_map = fetch_book_authors_metadata_map($pdo, $book_ids);
 $print_enrichment = print_enrichment_csv_map($pdo, $copy_map);
 
@@ -267,6 +267,7 @@ $bytes_written += is_int($bytes) ? $bytes : 0;
 
 foreach ($rows as $r) {
     $copies = $copy_map[(int)$r['id']] ?? [];
+    if (($r['record_status']??'active')==='active') $copies=array_values(array_filter($copies,fn($copy)=>$copy['record_status']==='active'));
     $authors_metadata_json = build_authors_metadata_json($authors_metadata_map[(int)$r['id']] ?? []);
     $cover_fn = $r['cover_image'] ? basename($r['cover_image']) : '';
 

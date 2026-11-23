@@ -1,11 +1,15 @@
-import { describe, it, expect } from 'vitest'
-
-import { mount } from '@vue/test-utils'
+import { afterEach, describe, it, expect, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
 import App from '../App.vue'
-
+afterEach(() => vi.unstubAllGlobals())
 describe('App', () => {
-  it('mounts renders properly', () => {
+  it('requires sign-in before presenting the private catalog', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ok: false, status: 401, json: async () => ({ok: false, error: 'Not authenticated'})})))
     const wrapper = mount(App)
-    expect(wrapper.text()).toContain('You did it!')
+    await flushPromises()
+    expect(wrapper.text()).toContain('My Book Catalog')
+    expect(wrapper.text()).toContain('Sign in')
+    expect(wrapper.find('table').exists()).toBe(false)
+    wrapper.unmount()
   })
 })

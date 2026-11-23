@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.9.0 - 2026-11-23
+
+- Schema 3.6.0 adds active/deleted flags to copies and linked evidence, preserving all files on ordinary deletion.
+- Shared invoices and price observations remain active if another active printed book uses them.
+- Whole-book restoration restores only copies retired with that book; separately archived printed copies have their own restore button.
+- Selected ZIP and Full backup now carry a self-contained portable package: CSV, bibliographic relations, copy identities, full valuation history, covers, condition photos and acquisition PDFs.
+- Import books recognizes portable ZIPs, validates hashes and relationships, previews without changes and restores original IDs. Conflicting existing records/files are rejected without overwriting.
+- Validation: 32 lifecycle/archive checks, 11 frontend tests, web export/import and maintenance checks, plus a full real-catalog round trip of 11,273 books and 14,458 files with identical metadata and hashes. Two pre-existing unrecognized cover binaries are preserved with warnings.
+
 ## 3.8.1 - 2026-11-23
 
 - Added print-only enrichment columns to standalone book CSV, selected CSV+cover exports and the books.csv inside full backups: current valuation amounts/confidence/methods, preservation labels, dated source details, complete assessment-history JSON and physical-copy photo/invoice metadata including paper-original locations.

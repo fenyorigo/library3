@@ -93,7 +93,7 @@
           class="link-btn"
           type="button"
           @click="onExportSelectedBundle"
-        >Export selected books (CSV + covers)</button>
+        >Export selected books (CSV + images/PDFs)</button>
         <button
           v-if="isAdmin"
           class="link-btn"
@@ -1010,7 +1010,7 @@ const onExportSelectedBundle = async () => {
   if (valueFilter.value) params.value_filter = valueFilter.value;
   if (recordStatusFilter.value) params.record_status = recordStatusFilter.value;
   const url = buildBackupUrl("export_selected_bundle.php", params);
-  await runBackupFlow(url, "selected CSV + covers");
+  await runBackupFlow(url, "selected CSV + images/PDFs");
 };
 
 const onExportCatalogStatistics = () => {

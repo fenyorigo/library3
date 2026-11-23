@@ -9,7 +9,7 @@ declare(strict_types=1);
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
 
-const SCHEMA_VERSION = '3.5.0';
+const SCHEMA_VERSION = '3.6.0';
 
 /* --------------------------- Error helpers --------------------------- */
 
@@ -1534,17 +1534,20 @@ function normalize_book_copy_input(array $copy, int $index = 0): array {
     ];
 }
 
-function fetch_book_copies_map(PDO $pdo, array $book_ids): array {
+function fetch_book_copies_map(PDO $pdo, array $book_ids, bool $include_deleted = false): array {
     $book_ids = array_values(array_filter(array_map('intval', $book_ids), static fn (int $id): bool => $id > 0));
     if (!$book_ids || !bookcopies_table_exists($pdo)) return [];
 
     $placeholders = implode(',', array_fill(0, count($book_ids), '?'));
+    $has_status = table_column_exists($pdo, 'BookCopies', 'record_status');
+    $status_cols = $has_status ? ', record_status, deleted_with_book' : ", 'active' AS record_status, 0 AS deleted_with_book";
+    $active_sql = $has_status && !$include_deleted ? " AND record_status='active'" : '';
     $fs_col = bookcopies_has_file_size($pdo) ? ', file_size' : ', 0 AS file_size';
     $sha_col = bookcopies_has_sha256($pdo) ? ', sha256' : ', NULL AS sha256';
     $st = $pdo->prepare("
-        SELECT copy_id, book_id, format, quantity, physical_location, file_path{$fs_col}{$sha_col}, notes, created_at, updated_at
+        SELECT copy_id, book_id, format, quantity, physical_location, file_path{$fs_col}{$sha_col}{$status_cols}, notes, created_at, updated_at
         FROM BookCopies
-        WHERE book_id IN ($placeholders)
+        WHERE book_id IN ($placeholders){$active_sql}
         ORDER BY book_id ASC, FIELD(format, 'print', 'epub', 'mobi', 'azw3', 'pdf', 'djvu', 'lit', 'prc', 'rtf', 'odt'), copy_id ASC
     ");
     $st->execute($book_ids);
@@ -1560,8 +1563,8 @@ function fetch_book_copies_map(PDO $pdo, array $book_ids): array {
     return $map;
 }
 
-function fetch_book_copies(PDO $pdo, int $book_id): array {
-    $map = fetch_book_copies_map($pdo, [$book_id]);
+function fetch_book_copies(PDO $pdo, int $book_id, bool $include_deleted = false): array {
+    $map = fetch_book_copies_map($pdo, [$book_id], $include_deleted);
     return $map[$book_id] ?? [];
 }
 
@@ -1632,6 +1635,7 @@ function sync_book_copy_derived_fields(PDO $pdo, int $book_id, ?array $copies = 
     $upd = $pdo->prepare('UPDATE Books SET copy_count = ?, placement_id = ? WHERE book_id = ?');
     $upd->execute([$copy_count, $placement_id, $book_id]);
 
+    catalog_evidence_sync($pdo);
     return [
         'copies' => $copies,
         'copy_count' => $copy_count,
@@ -1647,7 +1651,7 @@ function upsert_default_print_copy(PDO $pdo, int $book_id, int $quantity, ?strin
     $sel = $pdo->prepare("
         SELECT copy_id
         FROM BookCopies
-        WHERE book_id = ? AND format = 'print'
+        WHERE book_id = ? AND format = 'print' AND record_status='active'
         ORDER BY copy_id ASC
         LIMIT 1
     ");
@@ -1714,15 +1718,20 @@ function replace_book_copies(PDO $pdo, int $book_id, array $copies): array {
         $lock = $pdo->prepare('SELECT book_id FROM Books WHERE book_id = ? FOR UPDATE');
         $lock->execute([$book_id]);
         if (!$lock->fetchColumn()) throw new InvalidArgumentException('Book not found');
-        $existing_stmt = $pdo->prepare('SELECT copy_id FROM BookCopies WHERE book_id = ? FOR UPDATE');
+        $existing_stmt = $pdo->prepare('SELECT copy_id,format FROM BookCopies WHERE book_id = ? AND record_status=\'active\' FOR UPDATE');
         $existing_stmt->execute([$book_id]);
-        $existing = array_fill_keys($existing_stmt->fetchAll(PDO::FETCH_COLUMN), true);
-        $seen = [];
+        $existing = [];
+        foreach ($existing_stmt->fetchAll(PDO::FETCH_ASSOC) as $existing_copy) $existing[(int)$existing_copy['copy_id']]=$existing_copy['format'];
+        $seen = []; $input_seen = [];
         $has_documentation = $pdo->query("SHOW TABLES LIKE 'BookCopyPhotos'")->fetchColumn() !== false;
-        foreach ($norm as $copy) {
+        foreach ($norm as &$copy) {
             $id = $copy['copy_id'];
-            if ($id !== null && (!isset($existing[$id]) || isset($seen[$id]))) {
+            if ($id !== null && (!isset($existing[$id]) || isset($input_seen[$id]))) {
                 throw new InvalidArgumentException('Invalid or repeated copy_id for this book');
+            }
+            if ($id !== null) $input_seen[$id]=true;
+            if ($id !== null && $existing[$id] === 'print' && $copy['format'] !== 'print') {
+                $copy['copy_id'] = null; $id = null;
             }
             if ($id !== null) {
                 $seen[$id] = true;
@@ -1733,6 +1742,7 @@ function replace_book_copies(PDO $pdo, int $book_id, array $copies): array {
                 }
             }
         }
+        unset($copy);
         $update_columns = array_values(array_filter($columns, fn($c) => !in_array($c, ['book_id', 'created_at', 'updated_at'], true)));
         $upd = $pdo->prepare('UPDATE BookCopies SET ' . implode(', ', array_map(fn($c) => "$c = ?", $update_columns)) . ', updated_at = CURRENT_TIMESTAMP WHERE copy_id = ? AND book_id = ?');
         foreach ($norm as $copy) {
@@ -1758,8 +1768,12 @@ function replace_book_copies(PDO $pdo, int $book_id, array $copies): array {
         // RESTRICT foreign keys protect copies with attached evidence from deletion.
         $del = $pdo->prepare('DELETE FROM BookCopies WHERE copy_id = ? AND book_id = ?');
         foreach ($existing as $id => $_) {
-            if (!isset($seen[$id])) $del->execute([$id, $book_id]);
+            if (!isset($seen[$id])) {
+                if ($existing[$id] === 'print') $pdo->prepare("UPDATE BookCopies SET record_status='deleted',deleted_with_book=0 WHERE copy_id=?")->execute([$id]);
+                else $del->execute([$id, $book_id]);
+            }
         }
+        catalog_evidence_sync($pdo);
         if ($owns_transaction) $pdo->commit();
     } catch (Throwable $e) {
         if ($owns_transaction && $pdo->inTransaction()) $pdo->rollBack();
@@ -1790,9 +1804,9 @@ function delete_book_copy_record(PDO $pdo, int $copy_id): array {
     }
 
     $sel = $pdo->prepare("
-        SELECT copy_id, book_id, quantity
+        SELECT copy_id, book_id, quantity, format
         FROM BookCopies
-        WHERE copy_id = ?
+        WHERE copy_id = ? AND record_status='active'
         LIMIT 1
         FOR UPDATE
     ");
@@ -1822,12 +1836,14 @@ function delete_book_copy_record(PDO $pdo, int $copy_id): array {
         $upd->execute([$copy_id]);
         $decremented = $upd->rowCount() > 0;
     } else {
-        $del = $pdo->prepare('DELETE FROM BookCopies WHERE copy_id = ?');
+        $del = $row['format']==='print' ? $pdo->prepare("UPDATE BookCopies SET record_status='deleted',deleted_with_book=0 WHERE copy_id=?") : $pdo->prepare('DELETE FROM BookCopies WHERE copy_id = ?');
         $del->execute([$copy_id]);
         $deleted = $del->rowCount() > 0;
     }
 
     $copies = fetch_book_copies($pdo, $book_id);
+    if (!$copies) $pdo->prepare("UPDATE Books SET record_status='deleted' WHERE book_id=?")->execute([$book_id]);
+    catalog_evidence_sync($pdo);
     return [
         'ok' => true,
         'book_id' => $book_id,
@@ -2569,6 +2585,7 @@ function valuation_apply_import(PDO $db, array $rows, string $sha, string $filen
                 foreach (['used','replacement'] as $role) if (in_array($key,$row['roles'][$role],true)) $link->execute([$assessment_id,$source_ids[$key],$role]);
             }
         }
+        catalog_evidence_sync($db);
         $db->commit(); return ['import_id'=>$import_id,'already_imported'=>false,'applied'=>count($rows)];
     } catch (Throwable $e) { if ($db->inTransaction()) $db->rollBack(); throw $e; }
 }
@@ -2579,14 +2596,14 @@ function valuation_add_filter(PDO $db, array &$where, array &$params): void {
     if (!in_array($filter,['high_value','priority','estimated'],true)) throw new InvalidArgumentException('Invalid value filter.');
     if (!table_column_exists($db,'BookAssessments','assessment_id')) { $where[]='1=0'; return; }
     $condition=match($filter) { 'high_value'=>'va.is_high_value=1', 'priority'=>"va.priority='Elsőként ellenőrizendő'", 'estimated'=>'(va.used_amount IS NOT NULL OR va.replacement_amount IS NOT NULL)' };
-    $where[]='EXISTS (SELECT 1 FROM BookAssessments va WHERE va.book_id=b.book_id AND va.assessment_id=(SELECT MAX(vb.assessment_id) FROM BookAssessments vb WHERE vb.book_id=b.book_id) AND '.$condition.')';
+    $where[]='EXISTS (SELECT 1 FROM BookAssessments va WHERE va.book_id=b.book_id AND va.assessment_id=(SELECT MAX(vb.assessment_id) FROM BookAssessments vb WHERE vb.book_id=b.book_id) AND va.record_status=\'active\' AND '.$condition.')';
 }
 
-function valuation_get_latest(PDO $db, int $book_id): ?array {
+function valuation_get_latest(PDO $db, int $book_id, bool $include_deleted=false): ?array {
     if (!table_column_exists($db,'BookAssessments','assessment_id')) return null;
     $s=$db->prepare('SELECT a.*, i.created_at imported_at, i.original_filename FROM BookAssessments a JOIN ValuationImports i ON i.import_id=a.import_id WHERE a.book_id=? ORDER BY a.assessment_id DESC LIMIT 1');
     $s->execute([$book_id]); $row=$s->fetch(PDO::FETCH_ASSOC);
-    if (!$row) return null;
+    if (!$row || (!$include_deleted && ($row['record_status']??'active')==='deleted')) return null;
     $s=$db->prepare('SELECT p.*, l.source_role FROM PriceObservations p JOIN BookAssessmentSources l ON l.observation_id=p.observation_id WHERE l.assessment_id=? ORDER BY p.source_key');
     $s->execute([$row['assessment_id']]); $sources=[];
     foreach ($s->fetchAll(PDO::FETCH_ASSOC) as $source) {
@@ -2603,7 +2620,7 @@ function valuation_get_latest(PDO $db, int $book_id): ?array {
 function valuation_list_marks(PDO $db, array $book_ids): array {
     if (!$book_ids || !table_column_exists($db,'BookAssessments','assessment_id')) return [];
     $ids=array_map('intval',$book_ids);
-    $s=$db->prepare('SELECT a.book_id,a.is_high_value FROM BookAssessments a WHERE a.book_id IN ('.implode(',',array_fill(0,count($ids),'?')).') AND a.assessment_id=(SELECT MAX(v.assessment_id) FROM BookAssessments v WHERE v.book_id=a.book_id)');
+    $s=$db->prepare('SELECT a.book_id,IF(a.record_status=\'active\',a.is_high_value,0) is_high_value FROM BookAssessments a WHERE a.book_id IN ('.implode(',',array_fill(0,count($ids),'?')).') AND a.assessment_id=(SELECT MAX(v.assessment_id) FROM BookAssessments v WHERE v.book_id=a.book_id)');
     $s->execute($ids); $result=[];
     foreach ($s->fetchAll(PDO::FETCH_ASSOC) as $row) $result[(int)$row['book_id']]=$row;
     return $result;
@@ -2619,8 +2636,9 @@ function print_enrichment_csv_headers(): array {
 /** Additional CSV values only for records with an explicitly stored print copy. */
 function print_enrichment_csv_map(PDO $db, array $copy_map): array {
     $book_ids=[]; $copy_books=[];
+    $deleted_books=array_fill_keys($db->query("SELECT book_id FROM Books WHERE record_status='deleted'")->fetchAll(PDO::FETCH_COLUMN),true);
     foreach ($copy_map as $book_id=>$copies) foreach ($copies as $copy) {
-        if (strtolower((string)($copy['format']??''))!=='print') continue;
+        if (strtolower((string)($copy['format']??''))!=='print' || (($copy['record_status']??'active')==='deleted' && !isset($deleted_books[$book_id]))) continue;
         $book_ids[(int)$book_id]=(int)$book_id;
         if (!empty($copy['copy_id'])) $copy_books[(int)$copy['copy_id']]=(int)$book_id;
     }
@@ -2674,4 +2692,204 @@ function print_enrichment_csv_map(PDO $db, array $copy_map): array {
         foreach ($documents as $book_id=>$entries) $result[$book_id]['Példánydokumentáció (JSON)']=json_encode(['copies'=>$entries],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);
     }
     return $result;
+}
+
+function catalog_evidence_sync(PDO $db): void {
+    if (!table_column_exists($db,'BookCopies','deleted_with_book')) return;
+    // Flags derive from actual ownership. Shared evidence stays active if any owner is active.
+    $db->exec("UPDATE BookCopyPhotos p JOIN BookCopies c ON c.copy_id=p.copy_id JOIN Books b ON b.book_id=c.book_id SET p.record_status=IF(c.record_status='active' AND b.record_status='active','active','deleted')");
+    $db->exec("UPDATE BookCopyAcquisitionDocuments l JOIN BookCopies c ON c.copy_id=l.copy_id JOIN Books b ON b.book_id=c.book_id SET l.record_status=IF(c.record_status='active' AND b.record_status='active','active','deleted')");
+    $db->exec("UPDATE AcquisitionDocuments d SET d.record_status=IF(EXISTS(SELECT 1 FROM BookCopyAcquisitionDocuments l WHERE l.document_id=d.document_id AND l.record_status='active'),'active','deleted')");
+    $db->exec("UPDATE BookAssessments a JOIN Books b ON b.book_id=a.book_id SET a.record_status=IF(b.record_status='active' AND EXISTS(SELECT 1 FROM BookCopies c WHERE c.book_id=b.book_id AND c.format='print' AND c.record_status='active'),'active','deleted')");
+    $db->exec("UPDATE BookAssessmentSources l JOIN BookAssessments a ON a.assessment_id=l.assessment_id SET l.record_status=a.record_status");
+    $db->exec("UPDATE PriceObservations p SET p.record_status=IF(EXISTS(SELECT 1 FROM BookAssessmentSources l WHERE l.observation_id=p.observation_id AND l.record_status='active'),'active','deleted')");
+}
+
+function catalog_retire_book(PDO $db,int $book_id): void {
+    $owns_transaction=!$db->inTransaction();
+    if ($owns_transaction) $db->beginTransaction();
+    try {
+        $s=$db->prepare('SELECT book_id FROM Books WHERE book_id=? FOR UPDATE');$s->execute([$book_id]);
+        if (!$s->fetchColumn()) throw new RuntimeException('Book not found.',404);
+        $db->prepare("UPDATE BookCopies SET record_status='deleted',deleted_with_book=1 WHERE book_id=? AND record_status='active'")->execute([$book_id]);
+        $db->prepare("UPDATE Books SET record_status='deleted' WHERE book_id=?")->execute([$book_id]);
+        catalog_evidence_sync($db);
+        if ($owns_transaction) $db->commit();
+    } catch (Throwable $e) {
+        if ($owns_transaction && $db->inTransaction()) $db->rollBack();
+        throw $e;
+    }
+}
+
+function catalog_restore_book(PDO $db,int $book_id): array {
+    $s=$db->prepare('SELECT record_status FROM Books WHERE book_id=? FOR UPDATE');$s->execute([$book_id]);$status=$s->fetchColumn();
+    if ($status===false) throw new RuntimeException('Book not found.',404);
+    $copies=fetch_book_copies($db,$book_id,true);
+    $eligible=array_values(array_filter($copies,fn($c)=>$c['record_status']==='active' || (int)$c['deleted_with_book']===1));
+    if (!$eligible) throw new RuntimeException('Restore an archived copy first; no copies were retired with this book.',409);
+    if (!can_restore_book_from_copies($eligible)) throw new RuntimeException('No readable ebook path is available.',409);
+    $db->prepare("UPDATE BookCopies SET record_status='active',deleted_with_book=0 WHERE book_id=? AND deleted_with_book=1")->execute([$book_id]);
+    $db->prepare("UPDATE Books SET record_status='active' WHERE book_id=?")->execute([$book_id]);
+    $result=sync_book_copy_derived_fields($db,$book_id);catalog_evidence_sync($db);return $result;
+}
+
+function catalog_restore_copy(PDO $db,int $copy_id): array {
+    $s=$db->prepare('SELECT * FROM BookCopies WHERE copy_id=? FOR UPDATE');$s->execute([$copy_id]);$copy=$s->fetch(PDO::FETCH_ASSOC);
+    if (!$copy) throw new RuntimeException('Copy not found.',404);
+    if ($copy['format']!=='print' && !book_copy_file_path_exists($copy['file_path'])) throw new RuntimeException('Ebook file is not available.',409);
+    $book_id=(int)$copy['book_id'];
+    $db->prepare("UPDATE BookCopies SET record_status='active',deleted_with_book=0 WHERE copy_id=?")->execute([$copy_id]);
+    $db->prepare("UPDATE Books SET record_status='active' WHERE book_id=?")->execute([$book_id]);
+    $result=sync_book_copy_derived_fields($db,$book_id);catalog_evidence_sync($db);$result['book_id']=$book_id;return $result;
+}
+
+function portable_tables(): array {
+    return ['Publishers'=>['publisher_id'],'Placement'=>['placement_id'],'Authors'=>['author_id'],'Subjects'=>['subject_id'],
+        'Books'=>['book_id'],'Books_Authors'=>['book_id','author_id'],'Books_Subjects'=>['book_id','subject_id'],
+        'BookCopies'=>['copy_id'],'AcquisitionDocuments'=>['document_id'],'BookCopyPhotos'=>['photo_id'],
+        'BookCopyAcquisitionDocuments'=>['copy_id','document_id'],'ValuationImports'=>['import_id'],
+        'BookAssessments'=>['assessment_id'],'PriceObservations'=>['observation_id'],'BookAssessmentSources'=>['assessment_id','observation_id','source_role']];
+}
+function portable_rows(PDO $db,string $table,string $column,array $ids): array {
+    if (!$ids) return [];
+    if (!isset(portable_tables()[$table]) || !preg_match('/^[a-z_]+$/D',$column)) throw new LogicException('Invalid package table.');
+    $ids=array_values(array_unique(array_map('intval',$ids)));$s=$db->prepare('SELECT * FROM `'.$table.'` WHERE `'.$column.'` IN ('.implode(',',array_fill(0,count($ids),'?')).') ORDER BY '.implode(',',portable_tables()[$table]));$s->execute($ids);return $s->fetchAll(PDO::FETCH_ASSOC);
+}
+function portable_path(string $path): bool {
+    return (bool)preg_match('~^(?:copy-attachments/[a-f0-9]{32}\.(?:jpg|png|webp|pdf)|uploads/(?:[0-9]+/[A-Za-z0-9_-]+\.(?:jpg|jpeg|png|webp|gif)|default[-_]cover\.jpg))$~D',$path);
+}
+function portable_target(string $path): string {
+    if (!portable_path($path)) throw new InvalidArgumentException('Unsafe archive path.');
+    $base=str_starts_with($path,'copy-attachments/')?copy_documentation_root():__DIR__.'/uploads';
+    $relative=str_starts_with($path,'copy-attachments/')?substr($path,17):substr($path,8);
+    $target=rtrim($base,'/\\').'/'.$relative;
+    for ($parent=dirname($target);$parent!==dirname($parent);$parent=dirname($parent)) {
+        if (is_link($parent)) throw new InvalidArgumentException('Symbolic-link destination is not allowed.');
+        if ($parent===rtrim($base,'/\\')) break;
+    }
+    if (is_link($target)) throw new InvalidArgumentException('Symbolic-link destination is not allowed.');
+    return $target;
+}
+function portable_manifest(PDO $db,array $book_ids): array {
+    $t=[];$t['Books']=portable_rows($db,'Books','book_id',$book_ids);$ids=array_column($t['Books'],'book_id');
+    foreach (['BookCopies','Books_Authors','Books_Subjects','BookAssessments'] as $table) $t[$table]=portable_rows($db,$table,'book_id',$ids);
+    $t['Authors']=portable_rows($db,'Authors','author_id',array_column($t['Books_Authors'],'author_id'));
+    $t['Subjects']=portable_rows($db,'Subjects','subject_id',array_column($t['Books_Subjects'],'subject_id'));
+    $t['Publishers']=portable_rows($db,'Publishers','publisher_id',array_filter(array_column($t['Books'],'publisher_id')));
+    $t['Placement']=portable_rows($db,'Placement','placement_id',array_filter(array_column($t['Books'],'placement_id')));
+    $cids=array_column($t['BookCopies'],'copy_id');
+    $t['BookCopyPhotos']=portable_rows($db,'BookCopyPhotos','copy_id',$cids);
+    $t['BookCopyAcquisitionDocuments']=portable_rows($db,'BookCopyAcquisitionDocuments','copy_id',$cids);
+    $t['AcquisitionDocuments']=portable_rows($db,'AcquisitionDocuments','document_id',array_column($t['BookCopyAcquisitionDocuments'],'document_id'));
+    $t['BookAssessmentSources']=portable_rows($db,'BookAssessmentSources','assessment_id',array_column($t['BookAssessments'],'assessment_id'));
+    $t['PriceObservations']=portable_rows($db,'PriceObservations','observation_id',array_column($t['BookAssessmentSources'],'observation_id'));
+    $t['ValuationImports']=portable_rows($db,'ValuationImports','import_id',array_merge(array_column($t['BookAssessments'],'import_id'),array_column($t['PriceObservations'],'import_id')));
+    // A selected archive carries only selected owners, including their archived links.
+    $active_docs=[];foreach($t['BookCopyAcquisitionDocuments'] as $link)if($link['record_status']==='active')$active_docs[$link['document_id']]=true;
+    foreach($t['AcquisitionDocuments'] as &$doc)$doc['record_status']=isset($active_docs[$doc['document_id']])?'active':'deleted';unset($doc);
+    $active_prices=[];foreach($t['BookAssessmentSources'] as $link)if($link['record_status']==='active')$active_prices[$link['observation_id']]=true;
+    foreach($t['PriceObservations'] as &$price)$price['record_status']=isset($active_prices[$price['observation_id']])?'active':'deleted';unset($price);
+    $paths=[];
+    foreach($t['Books'] as $book)foreach(['cover_image','cover_thumb'] as $key){$path=$book[$key]??'';if($path!=='' && str_starts_with($path,'uploads/'))$paths[$path]=true;}
+    foreach(['BookCopyPhotos','AcquisitionDocuments'] as $table)foreach($t[$table] as $record)if(!empty($record['file_path']))$paths['copy-attachments/'.$record['file_path']]=true;
+    $files=[];foreach(array_keys($paths) as $path){$file=portable_target($path);if(!is_file($file)||!is_readable($file))throw new RuntimeException('Archive incomplete: missing file '.$path);$files[]=['path'=>$path,'size'=>filesize($file),'sha256'=>hash_file('sha256',$file)];}
+    $ordered=[];foreach(portable_tables() as $table=>$_)$ordered[$table]=$t[$table];
+    return ['format'=>'library3-portable','format_version'=>1,'schema_version'=>SCHEMA_VERSION,'created_at'=>gmdate('c'),'tables'=>$ordered,'files'=>$files];
+}
+function portable_add_to_zip(ZipArchive $zip,PDO $db,array $book_ids): void {
+    $manifest=portable_manifest($db,$book_ids);$sums=[];
+    foreach($manifest['files'] as $file){if($zip->locateName($file['path'])===false && !$zip->addFile(portable_target($file['path']),$file['path']))throw new RuntimeException('Could not package attachment.');$sums[]=$file['sha256'].'  '.$file['path'];}
+    $json=json_encode($manifest,JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT|JSON_THROW_ON_ERROR);
+    $zip->addFromString('library3-package.json',$json);$sums[]=hash('sha256',$json).'  library3-package.json';
+    $zip->addFromString('portable-sha256sums.txt',implode("\n",$sums)."\n");
+    $zip->addFromString('PORTABLE-RESTORE.txt',"Import this ZIP through Import books, preserving IDs.\nIt contains book records, copy/document/valuation history and all referenced cover, condition-photo and invoice files, including archived items.\nA dry run validates metadata and file hashes. Different existing rows or files with the same IDs/paths are rejected; nothing is overwritten.\nOrdinary ebook files are external repository references and are not included.\n");
+}
+function portable_has_manifest(string $path): bool {
+    $zip=new ZipArchive();if($zip->open($path)!==true)return false;$has=$zip->locateName('library3-package.json')!==false;$zip->close();return $has;
+}
+function portable_restore(PDO $db,string $path,bool $dry_run=false): array {
+    $zip=new ZipArchive();if($zip->open($path)!==true)throw new InvalidArgumentException('Invalid ZIP archive.');
+    $stage=null;$created=[];
+    try {
+        $stat=$zip->statName('library3-package.json');if(!$stat||$stat['size']>64*1024*1024)throw new InvalidArgumentException('Missing or oversized archive manifest.');
+        $m=json_decode($zip->getFromName('library3-package.json'),true,64,JSON_THROW_ON_ERROR);
+        if(($m['format']??'')!=='library3-portable'||($m['format_version']??0)!==1||($m['schema_version']??'')!==SCHEMA_VERSION)throw new InvalidArgumentException('Unsupported archive format/schema; update the application first.');
+        if(!is_array($m['tables']??null)||array_keys($m['tables'])!==array_keys(portable_tables())||!is_array($m['files']??null))throw new InvalidArgumentException('Invalid archive tables.');
+        if($zip->numFiles>100000)throw new InvalidArgumentException('Archive has too many entries.');
+        foreach ($m['tables'] as $rows) { if (!is_array($rows) || !array_is_list($rows)) throw new InvalidArgumentException('Invalid archive row list.'); foreach ($rows as $row) if (!is_array($row) || (isset($row['record_status']) && !in_array($row['record_status'],['active','deleted'],true))) throw new InvalidArgumentException('Invalid archive status.'); }
+        $seen=[];$total=0;
+        for($i=0;$i<$zip->numFiles;$i++){$item=$zip->statIndex($i);$name=$item['name'];if(isset($seen[$name])||str_contains($name,'\\')||preg_match('~(?:^|/)\.\.(?:/|$)~',$name)||str_starts_with($name,'/'))throw new InvalidArgumentException('Unsafe or duplicate ZIP entry.');$seen[$name]=true;$total+=$item['size'];$opsys=0;$attrs=0;$zip->getExternalAttributesIndex($i,$opsys,$attrs);if((($attrs>>16)&0170000)===0120000)throw new InvalidArgumentException('ZIP symbolic links are not allowed.');}
+        if($total>4*1024*1024*1024)throw new InvalidArgumentException('Uncompressed archive exceeds 4 GB.');
+        $declared=[];foreach($m['files'] as $file){$name=$file['path']??'';if(!portable_path($name)||isset($declared[$name])||!preg_match('/^[a-f0-9]{64}$/D',$file['sha256']??''))throw new InvalidArgumentException('Invalid archive file declaration.');$declared[$name]=$file;}
+        $referenced=[];foreach($m['tables']['Books'] as $book)foreach(['cover_image','cover_thumb'] as $key){$name=$book[$key]??'';if(str_starts_with((string)$name,'uploads/'))$referenced[$name]=true;}
+        foreach(['BookCopyPhotos','AcquisitionDocuments'] as $table)foreach($m['tables'][$table] as $row)if(!empty($row['file_path']))$referenced['copy-attachments/'.$row['file_path']]=true;
+        if(array_diff_key($referenced,$declared)||array_diff_key($declared,$referenced))throw new InvalidArgumentException('Manifest file references do not match its payload.');
+        portable_validate_metadata($m['tables'],$declared);
+        $stage=sys_get_temp_dir().'/library3-portable-'.bin2hex(random_bytes(12));if(!mkdir($stage,0700))throw new RuntimeException('Cannot stage archive.');
+        $staged=[];$warnings=[];
+        foreach($declared as $name=>$file){$entry=$zip->statName($name);if(!$entry||$entry['size']!==(int)$file['size']||$entry['size']>64*1024*1024)throw new InvalidArgumentException('Missing or invalid file: '.$name);$input=$zip->getStream($name);if(!$input)throw new InvalidArgumentException('Unreadable ZIP entry.');$tmp=$stage.'/'.count($staged);$out=fopen($tmp,'xb');stream_copy_to_stream($input,$out);fclose($input);fclose($out);if(hash_file('sha256',$tmp)!==$file['sha256'])throw new InvalidArgumentException('Checksum mismatch: '.$name);$mime=(new finfo(FILEINFO_MIME_TYPE))->file($tmp);if(!in_array($mime,['image/jpeg','image/png','image/webp','image/gif','application/pdf'],true)){if(str_starts_with($name,'uploads/')&&$mime==='application/octet-stream')$warnings[]=['line'=>0,'warning'=>'Legacy cover is not a recognized image; original bytes preserved: '.$name];else throw new InvalidArgumentException('Unsupported attachment content: '.$name);}$target=portable_target($name);if(is_file($target)&&hash_file('sha256',$target)!==$file['sha256'])throw new RuntimeException('Existing file differs: '.$name,409);$staged[$name]=['tmp'=>$tmp,'target'=>$target,'sha256'=>$file['sha256'],'size'=>(int)$file['size']];}
+        $db->beginTransaction();$inserted=0;$reused=0;$rows_seen=[];
+        foreach(portable_tables() as $table=>$keys){
+            $columns=$db->query('SHOW COLUMNS FROM `'.$table.'`')->fetchAll(PDO::FETCH_COLUMN);
+            foreach($m['tables'][$table] as $row){
+                if(!is_array($row)||array_diff(array_keys($row),$columns)||array_diff($columns,array_keys($row)))throw new InvalidArgumentException('Archive columns do not match '.$table);
+                foreach($row as $value)if(!is_scalar($value)&&$value!==null)throw new InvalidArgumentException('Invalid archive scalar.');
+                $identity=json_encode(array_map(fn($key)=>$row[$key],$keys));if(isset($rows_seen[$table][$identity]))throw new InvalidArgumentException('Repeated archive record.');$rows_seen[$table][$identity]=true;
+                $where=implode(' AND ',array_map(fn($key)=>'`'.$key.'`=?',$keys));$values=array_map(fn($key)=>$row[$key],$keys);
+                $s=$db->prepare('SELECT * FROM `'.$table.'` WHERE '.$where.' FOR UPDATE');$s->execute($values);$existing=$s->fetch(PDO::FETCH_ASSOC);
+                if($existing){foreach($columns as $column)if(($existing[$column]===null)!==($row[$column]===null)||($row[$column]!==null&&(string)$existing[$column]!== (string)$row[$column]))throw new RuntimeException('Existing '.$table.' ID differs; restore into an empty catalog or resolve ID conflicts first.',409);$reused++;continue;}
+                $s=$db->prepare('INSERT INTO `'.$table.'` (`'.implode('`,`',$columns).'`) VALUES ('.implode(',',array_fill(0,count($columns),'?')).')');$s->execute(array_map(fn($column)=>$row[$column],$columns));$inserted++;
+            }
+        }
+        // Verify projected shared states before committing or copying anything into place.
+        catalog_evidence_sync($db);
+        if($dry_run){$db->rollBack();return ['dry_run'=>true,'source_kind'=>'portable_zip','total'=>count($m['tables']['Books']),'inserted'=>$inserted,'reused'=>$reused,'files'=>count($staged),'errors'=>[],'warnings'=>$warnings,'note'=>'Portable archive validated; no data or files changed.'];}
+        foreach ($staged as $item) {
+            $target=$item['target'];
+            if (is_file($target)) {
+                if (hash_file('sha256',$target)!==$item['sha256']) throw new RuntimeException('Destination changed during import.',409);
+                continue;
+            }
+            $dir=dirname($target);
+            if (!is_dir($dir) && !mkdir($dir,str_starts_with($target,rtrim(copy_documentation_root(),'/').'/')?0700:0755,true)) throw new RuntimeException('Cannot create attachment directory.');
+            $tmp=tempnam($dir,'.portable-');
+            if ($tmp===false) throw new RuntimeException('Cannot stage destination file.');
+            try {
+                if (!copy($item['tmp'],$tmp) || filesize($tmp)!==$item['size'] || hash_file('sha256',$tmp)!==$item['sha256']) throw new RuntimeException('Incomplete destination write.');
+                chmod($tmp,str_contains($target,'/uploads/')?0644:0600);
+                if (!@link($tmp,$target)) {
+                    if (!is_file($target) || is_link($target) || hash_file('sha256',$target)!==$item['sha256']) throw new RuntimeException('Destination appeared during import.',409);
+                } else $created[]=$target;
+            } finally { @unlink($tmp); }
+        }
+        $db->prepare('INSERT INTO PortablePackageImports (package_sha256,source_created_at) VALUES (?,?) ON DUPLICATE KEY UPDATE package_sha256=VALUES(package_sha256)')->execute([hash_file('sha256',$path),$m['created_at']??null]);
+        $db->commit();$created=[];
+        return ['dry_run'=>false,'source_kind'=>'portable_zip','total'=>count($m['tables']['Books']),'inserted'=>$inserted,'reused'=>$reused,'files'=>count($staged),'errors'=>[],'warnings'=>$warnings,'note'=>'Portable archive restored with document files, history and deletion flags.'];
+    }catch(Throwable $e){if($db->inTransaction())$db->rollBack();foreach($created as $file)@unlink($file);throw $e;}
+    finally{$zip->close();if($stage&&is_dir($stage)){foreach(glob($stage.'/*')?:[] as $file)@unlink($file);@rmdir($stage);}}
+}
+
+function portable_validate_metadata(array $tables,array $files): void {
+    $maps=[];
+    foreach (portable_tables() as $table=>$keys) {
+        foreach ($tables[$table] as $row) {
+            foreach ($keys as $key) if (!isset($row[$key]) || ($key!=='source_role' && (!ctype_digit((string)$row[$key]) || (int)$row[$key]<1))) throw new InvalidArgumentException('Invalid archive identity.');
+            if (count($keys)===1) $maps[$table][(string)$row[$keys[0]]]=$row;
+        }
+    }
+    $parent=function(string $table,$id)use($maps):array {if(!isset($maps[$table][(string)$id]))throw new InvalidArgumentException('Archive omits a referenced '.$table.' record.');return $maps[$table][(string)$id];};
+    $status=function(array $row,bool $active):void{if(($row['record_status']??null)!==($active?'active':'deleted'))throw new InvalidArgumentException('Inconsistent archive deletion flags.');};
+    $print=[];$docs=[];$prices=[];
+    foreach ($tables['Books'] as $row) {
+        foreach (['publisher_id'=>'Publishers','placement_id'=>'Placement'] as $key=>$table) if ($row[$key]!==null) $parent($table,$row[$key]);
+        foreach (['cover_image','cover_thumb'] as $key) if (!empty($row[$key]) && !portable_path($row[$key])) throw new InvalidArgumentException('Unsupported cover path in portable archive.');
+    }
+    foreach (['Books_Authors'=>['author_id','Authors'],'Books_Subjects'=>['subject_id','Subjects']] as $table=>[$key,$target]) foreach($tables[$table] as $row){$parent('Books',$row['book_id']);$parent($target,$row[$key]);}
+    foreach($tables['BookCopies'] as $row){$book=$parent('Books',$row['book_id']);if($book['record_status']==='deleted' && $row['record_status']==='active')throw new InvalidArgumentException('Active copy belongs to deleted book.');if(!in_array((string)$row['deleted_with_book'],['0','1'],true)||($row['record_status']==='active'&&(int)$row['deleted_with_book']!==0))throw new InvalidArgumentException('Invalid copy archive marker.');if($row['format']==='print'&&$row['record_status']==='active')$print[$row['book_id']]=true;}
+    foreach(['BookCopyPhotos','BookCopyAcquisitionDocuments'] as $table)foreach($tables[$table] as $row){$copy=$parent('BookCopies',$row['copy_id']);$book=$parent('Books',$copy['book_id']);$active=$copy['record_status']==='active'&&$book['record_status']==='active';$status($row,$active);if($copy['format']!=='print')throw new InvalidArgumentException('Physical documentation belongs to an ebook.');if($table==='BookCopyAcquisitionDocuments'){$parent('AcquisitionDocuments',$row['document_id']);if($active)$docs[$row['document_id']]=true;}}
+    foreach($tables['AcquisitionDocuments'] as $row)$status($row,isset($docs[$row['document_id']]));
+    foreach($tables['BookAssessments'] as $row){$book=$parent('Books',$row['book_id']);$parent('ValuationImports',$row['import_id']);$status($row,$book['record_status']==='active'&&isset($print[$row['book_id']]));}
+    foreach($tables['BookAssessmentSources'] as $row){$a=$parent('BookAssessments',$row['assessment_id']);$parent('PriceObservations',$row['observation_id']);$status($row,$a['record_status']==='active');if($row['record_status']==='active')$prices[$row['observation_id']]=true;}
+    foreach($tables['PriceObservations'] as $row){$parent('ValuationImports',$row['import_id']);$status($row,isset($prices[$row['observation_id']]));}
+    foreach(['BookCopyPhotos','AcquisitionDocuments'] as $table)foreach($tables[$table] as $row)if(!empty($row['file_path'])){$file=$files['copy-attachments/'.$row['file_path']]??null;if(!$file||(!empty($row['sha256'])&&$row['sha256']!==$file['sha256'])||($row['file_size']!==null&&(int)$row['file_size']!==(int)$file['size']))throw new InvalidArgumentException('Attachment metadata differs from file declaration.');}
 }

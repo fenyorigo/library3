@@ -388,12 +388,15 @@ if (!$import_cli_job) {
             if ($config !== false && trim((string)$config) !== '') {
                 $env_parts[] = 'BOOKCATALOG_CONFIG=' . escapeshellarg((string)$config);
             }
+            $attachment_root = getenv('BOOKCATALOG_ATTACHMENTS_DIR');
+            if ($attachment_root !== false && trim((string)$attachment_root) !== '') $env_parts[] = 'BOOKCATALOG_ATTACHMENTS_DIR=' . escapeshellarg((string)$attachment_root);
             $catalog_backup_dir = getenv('CATALOG_BACKUP_DIR');
             if ($catalog_backup_dir !== false && trim((string)$catalog_backup_dir) !== '') {
                 $env_parts[] = 'CATALOG_BACKUP_DIR=' . escapeshellarg((string)$catalog_backup_dir);
             }
             $cmd = implode(' ', $env_parts)
                 . ' ' . escapeshellarg(import_cli_binary())
+                . ' -d ' . escapeshellarg('memory_limit=' . ini_get('memory_limit'))
                 . ' ' . escapeshellarg(__FILE__)
                 . ' > ' . escapeshellarg($log_path)
                 . ' 2>&1 &';
@@ -480,6 +483,13 @@ try {
     $id_mode = trim((string)($_POST['id_mode'] ?? 'keep_ids'));
     if (!in_array($id_mode, ['keep_ids', 'new_catalog'], true)) {
         json_fail('Invalid id_mode', 400);
+    }
+
+    if (portable_has_manifest((string)$_FILES['file']['tmp_name'])) {
+        if ($id_mode !== 'keep_ids') throw new InvalidArgumentException('Portable ZIP restoration requires Keep IDs.');
+        $result = portable_restore(pdo(), (string)$_FILES['file']['tmp_name'], $dry_run);
+        if ($import_cli_job) @unlink((string)$_FILES['file']['tmp_name']);
+        import_json_success($result);
     }
 
     $upload = import_resolve_upload($_FILES['file']);
@@ -982,9 +992,11 @@ try {
             }
 
             if ($restoring_existing_deleted && $record_status === 'active' && !can_restore_book_from_copies($saved_copies ?? [])) {
-                $pdo->prepare("UPDATE Books SET record_status = 'deleted' WHERE book_id = ?")->execute([$book_id]);
+                catalog_retire_book($pdo,$book_id);
                 $push_warning($warnings, $total, 'Restore kept record deleted because ebook paths are no longer valid and no print copy exists.');
             }
+
+            if ($record_status === 'deleted') catalog_retire_book($pdo,$book_id);
 
             if ($authors_csv || $authors_metadata_json) {
                 attachAuthorsMetadataToBook($pdo, $book_id, $authors_csv, $authors_metadata_json);

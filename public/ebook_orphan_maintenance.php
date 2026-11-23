@@ -20,7 +20,7 @@ function ebook_orphan_active_condition(PDO $pdo): string {
 }
 
 function ebook_orphan_rows(PDO $pdo): array {
-    $rows = $pdo->query("\n        SELECT bc.copy_id, bc.book_id, bc.format, bc.file_path, bc.file_size, bc.sha256,\n               b.title, b.subtitle, b.series, b.language\n        FROM BookCopies bc\n        JOIN Books b ON b.book_id = bc.book_id\n        WHERE bc.file_path IS NOT NULL\n          AND TRIM(bc.file_path) <> ''\n          AND bc.format <> 'print'\n          AND bc.sha256 IS NOT NULL\n          AND TRIM(bc.sha256) <> ''\n          " . ebook_orphan_active_condition($pdo) . "\n        ORDER BY bc.sha256 ASC, bc.copy_id ASC\n    ")->fetchAll(PDO::FETCH_ASSOC);
+    $rows = $pdo->query("\n        SELECT bc.copy_id, bc.book_id, bc.format, bc.file_path, bc.file_size, bc.sha256,\n               b.title, b.subtitle, b.series, b.language\n        FROM BookCopies bc\n        JOIN Books b ON b.book_id = bc.book_id\n        WHERE bc.file_path IS NOT NULL\n          AND TRIM(bc.file_path) <> ''\n          AND bc.format <> 'print' AND bc.record_status='active'\n          AND bc.sha256 IS NOT NULL\n          AND TRIM(bc.sha256) <> ''\n          " . ebook_orphan_active_condition($pdo) . "\n        ORDER BY bc.sha256 ASC, bc.copy_id ASC\n    ")->fetchAll(PDO::FETCH_ASSOC);
 
     $author_map = fetch_book_authors_metadata_map($pdo, array_map(static fn($row): int => (int)($row['book_id'] ?? 0), $rows));
     foreach ($rows as &$row) {
@@ -203,8 +203,8 @@ function ebook_orphan_soft_delete(PDO $pdo, array $items): array {
     $updated = 0;
     $copy_rows_deleted = 0;
     $warnings = [];
-    $st = $pdo->prepare("UPDATE Books SET record_status = 'deleted' WHERE book_id = ? AND record_status = 'active'");
-    $del_copy = $pdo->prepare('DELETE FROM BookCopies WHERE copy_id = ? AND book_id = ?');
+    $st = $pdo->prepare("SELECT book_id FROM Books WHERE book_id = ? AND record_status = 'active'");
+    $del_copy = $pdo->prepare('DELETE FROM BookCopies WHERE copy_id = ? AND book_id = ? AND format <> \'print\' AND record_status=\'active\'');
     foreach ($items as $group_index => $candidate) {
         if (!is_array($candidate)) continue;
         $keep_book_id = (int)($candidate['keep']['book_id'] ?? 0);
@@ -227,7 +227,7 @@ function ebook_orphan_soft_delete(PDO $pdo, array $items): array {
                 continue;
             }
             $st->execute([$book_id]);
-            $updated += $st->rowCount();
+            if ($st->fetchColumn()) { catalog_retire_book($pdo,$book_id); $updated++; }
         }
     }
     return ['updated' => $updated, 'copy_rows_deleted' => $copy_rows_deleted, 'warnings' => $warnings];
@@ -239,7 +239,7 @@ function ebook_orphan_soft_delete_rows(PDO $pdo, array $rows): array {
     }
     $updated = 0;
     $warnings = [];
-    $st = $pdo->prepare("UPDATE Books SET record_status = 'deleted' WHERE book_id = ? AND record_status = 'active'");
+    $st = $pdo->prepare("SELECT book_id FROM Books WHERE book_id = ? AND record_status = 'active'");
     foreach ($rows as $index => $row) {
         if (!is_array($row)) continue;
         $book_id = (int)($row['book_id'] ?? 0);
@@ -248,7 +248,7 @@ function ebook_orphan_soft_delete_rows(PDO $pdo, array $rows): array {
             continue;
         }
         $st->execute([$book_id]);
-        $updated += $st->rowCount();
+        if ($st->fetchColumn()) { catalog_retire_book($pdo,$book_id); $updated++; }
     }
     return ['updated' => $updated, 'warnings' => $warnings];
 }

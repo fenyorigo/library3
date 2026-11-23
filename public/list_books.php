@@ -185,7 +185,7 @@ if ($q !== '') {
       . "{$folded_book_clause} OR "
       . "EXISTS ("
       . "  SELECT 1 FROM BookCopies bcq "
-      . "  WHERE bcq.book_id = b.book_id "
+      . "  WHERE bcq.book_id = b.book_id AND (bcq.record_status='active' OR b.record_status='deleted') "
       . "    AND bcq.format LIKE :t{$i}_format"
       . ") OR "
       . "EXISTS ("
@@ -208,14 +208,14 @@ if ($q !== '') {
 if ($format_filter !== null) {
   $where_chunks[] = "EXISTS (
       SELECT 1 FROM BookCopies bcf
-      WHERE bcf.book_id = b.book_id
+      WHERE bcf.book_id = b.book_id AND (bcf.record_status='active' OR b.record_status='deleted')
         AND bcf.format = :format_filter
     )";
   $params['format_filter'] = $format_filter;
 } elseif ($format_filter_ebooks) {
   $where_chunks[] = "EXISTS (
       SELECT 1 FROM BookCopies bcf
-      WHERE bcf.book_id = b.book_id
+      WHERE bcf.book_id = b.book_id AND (bcf.record_status='active' OR b.record_status='deleted')
         AND bcf.format != 'print'
     )";
 }
@@ -370,7 +370,7 @@ try {
     $st->execute();
     $rows = $st->fetchAll(PDO::FETCH_ASSOC);
 
-    $copy_map = fetch_book_copies_map($pdo, array_map(static fn (array $row): int => (int)$row['id'], $rows));
+    $copy_map = fetch_book_copies_map($pdo, array_map(static fn (array $row): int => (int)$row['id'], $rows), true);
     $valuation_marks = valuation_list_marks($pdo, array_column($rows, 'id'));
     foreach ($rows as &$row) {
         $row['has_cover'] = !empty($row['cover_image']);
@@ -378,6 +378,7 @@ try {
         $row['record_status'] = normalize_book_record_status($row['record_status'] ?? 'active');
         $row['language'] = normalize_book_language($row['language'] ?? 'unknown');
         $row['copies'] = $copy_map[(int)$row['id']] ?? [];
+        if ($row['record_status']==='active') $row['copies']=array_values(array_filter($row['copies'],fn($copy)=>$copy['record_status']==='active'));
         $row['copy_count'] = total_book_copy_quantity($row['copies'], (int)($row['copy_count'] ?? 1));
         $row['format_summary'] = summarize_book_formats($row['copies']);
     }

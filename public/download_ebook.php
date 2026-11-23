@@ -46,7 +46,7 @@ try {
         json_fail('BookCopies table is not available', 500);
     }
 
-    $st = $pdo->prepare("\n        SELECT bc.copy_id, bc.book_id, bc.format, bc.file_path,\n               b.title, " . (books_table_has_record_status($pdo) ? "b.record_status" : "'active' AS record_status") . "\n        FROM BookCopies bc\n        JOIN Books b ON b.book_id = bc.book_id\n        WHERE bc.copy_id = ?\n        LIMIT 1\n    ");
+    $st = $pdo->prepare("\n        SELECT bc.copy_id, bc.book_id, bc.format, bc.file_path, bc.record_status copy_status,\n               b.title, " . (books_table_has_record_status($pdo) ? "b.record_status" : "'active' AS record_status") . "\n        FROM BookCopies bc\n        JOIN Books b ON b.book_id = bc.book_id\n        WHERE bc.copy_id = ?\n        LIMIT 1\n    ");
     $st->execute([$copy_id]);
     $row = $st->fetch(PDO::FETCH_ASSOC);
     if (!is_array($row)) {
@@ -54,7 +54,7 @@ try {
     }
 
     $record_status = normalize_book_record_status($row['record_status'] ?? 'active');
-    if ($record_status === 'deleted' && (($me['role'] ?? '') !== 'admin')) {
+    if (($record_status === 'deleted' || $row['copy_status']==='deleted') && (($me['role'] ?? '') !== 'admin')) {
         json_fail('Ebook copy not found', 404);
     }
 

@@ -187,8 +187,8 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.8.1**
-Current schema version: **3.5.0**
+Current application version: **3.9.0**
+Current schema version: **3.6.0**
 
 ## Catalog Statistics CSV
 
@@ -285,3 +285,12 @@ assessment-history and photo/invoice metadata JSON. Ebook-only fields are empty,
 and physical-copy sections are hidden on ebook-only book dialogs. Binary files
 remain in the private attachment backup; ordinary book import does not restore
 the added metadata automatically. See [valuation CSV details](docs/valuations.md).
+
+
+Version 3.9.0 (schema 3.6.0) archives printed copies and their documentation/valuation
+links when books leave the catalog. Shared invoices and price observations remain
+active while any active owner remains; original files are retained privately.
+Selected-book ZIP export and Full backup both include CSV, complete book/copy/
+valuation metadata, cover images, condition photographs and invoice PDF scans in
+one portable archive. Import the complete ZIP through **Import books**, using
+**Keep IDs**; a dry run validates it first. See [Portable archives](docs/portable-archives.md).

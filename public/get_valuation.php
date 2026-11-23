@@ -9,5 +9,5 @@ try {
     $db=pdo();
     $s=$db->prepare('SELECT record_status FROM Books WHERE book_id=?'); $s->execute([$id]); $status=$s->fetchColumn();
     if ($status===false || ($status==='deleted' && $me['role']!=='admin')) json_fail('Book not found.',404);
-    json_out(['ok'=>true,'data'=>['assessment'=>valuation_get_latest($db,$id)]]);
+    json_out(['ok'=>true,'data'=>['assessment'=>valuation_get_latest($db,$id,$me['role']==='admin')]]);
 } catch (Throwable $e) { json_fail('Unable to load book assessment.',500); }

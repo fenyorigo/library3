@@ -11,7 +11,7 @@
 /*M!100616 SET @OLD_NOTE_VERBOSITY=@@NOTE_VERBOSITY, NOTE_VERBOSITY=0 */;
 /* BookCatalog schema baseline*/;
 /*  DB: books3 */;
-/*  version: 3.5.0 */;
+/*  version: 3.6.0 */;
 /*  generated: 2026-11-23 */;
 DROP TABLE IF EXISTS `BookAssessmentSources`;
 DROP TABLE IF EXISTS `PriceObservations`;
@@ -23,6 +23,14 @@ DROP TABLE IF EXISTS `AcquisitionDocuments`;
 DROP TABLE IF EXISTS `AuthEvents`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;
+DROP TABLE IF EXISTS `PortablePackageImports`;
+CREATE TABLE IF NOT EXISTS `PortablePackageImports` (
+  `package_sha256` char(64) NOT NULL,
+  `source_created_at` varchar(64) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`package_sha256`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE `AuthEvents` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `user_id` int(10) unsigned DEFAULT NULL,
@@ -69,6 +77,8 @@ CREATE TABLE `BookCopies` (
   `notes` text DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `updated_at` datetime DEFAULT NULL,
+  `record_status` enum('active','deleted') NOT NULL DEFAULT 'active',
+  `deleted_with_book` tinyint(1) NOT NULL DEFAULT 0,
   PRIMARY KEY (`copy_id`),
   KEY `idx_bookcopies_book` (`book_id`),
   KEY `idx_bookcopies_format` (`format`),
@@ -259,6 +269,7 @@ CREATE TABLE IF NOT EXISTS `BookCopyPhotos` (
   `taken_on` date DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `updated_at` datetime DEFAULT NULL,
+  `record_status` enum('active','deleted') NOT NULL DEFAULT 'active',
   PRIMARY KEY (`photo_id`),
   UNIQUE KEY `uniq_bookcopyphotos_slot` (`copy_id`, `slot_number`),
   CONSTRAINT `chk_bookcopyphotos_slot` CHECK (`slot_number` BETWEEN 1 AND 10),
@@ -282,6 +293,7 @@ CREATE TABLE IF NOT EXISTS `AcquisitionDocuments` (
   `notes` text DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `updated_at` datetime DEFAULT NULL,
+  `record_status` enum('active','deleted') NOT NULL DEFAULT 'active',
   PRIMARY KEY (`document_id`),
   KEY `idx_acquisitiondocuments_number` (`document_number`),
   CONSTRAINT `chk_acquisitiondocuments_title` CHECK (CHAR_LENGTH(TRIM(`title`)) > 0),
@@ -293,6 +305,7 @@ CREATE TABLE IF NOT EXISTS `BookCopyAcquisitionDocuments` (
   `document_id` bigint(20) unsigned NOT NULL,
   `item_reference` varchar(190) DEFAULT NULL COMMENT 'Line or lot identifier within the document',
   `notes` text DEFAULT NULL,
+  `record_status` enum('active','deleted') NOT NULL DEFAULT 'active',
   PRIMARY KEY (`copy_id`, `document_id`),
   KEY `idx_copyacquisitiondocuments_document` (`document_id`),
   CONSTRAINT `fk_copyacquisitiondocuments_copy` FOREIGN KEY (`copy_id`) REFERENCES `BookCopies` (`copy_id`) ON DELETE RESTRICT,
@@ -334,6 +347,7 @@ CREATE TABLE IF NOT EXISTS `BookAssessments` (
   `checked_on` date DEFAULT NULL,
   `raw_json` longtext NOT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `record_status` enum('active','deleted') NOT NULL DEFAULT 'active',
   PRIMARY KEY (`assessment_id`),
   UNIQUE KEY `uniq_bookassessments_import_book` (`import_id`,`book_id`),
   KEY `idx_bookassessments_latest` (`book_id`,`assessment_id`),
@@ -361,6 +375,7 @@ CREATE TABLE IF NOT EXISTS `PriceObservations` (
   `checked_on` date DEFAULT NULL,
   `record_ids` text DEFAULT NULL COMMENT 'Scope: a shared set price must not be multiplied per volume',
   `raw_json` longtext NOT NULL,
+  `record_status` enum('active','deleted') NOT NULL DEFAULT 'active',
   PRIMARY KEY (`observation_id`),
   UNIQUE KEY `uniq_priceobservations_source` (`import_id`,`source_key`),
   CONSTRAINT `chk_priceobservations_amount` CHECK (`amount` IS NULL OR `amount` >= 0),
@@ -371,6 +386,7 @@ CREATE TABLE IF NOT EXISTS `BookAssessmentSources` (
   `assessment_id` bigint unsigned NOT NULL,
   `observation_id` bigint unsigned NOT NULL,
   `source_role` varchar(16) NOT NULL DEFAULT 'reference',
+  `record_status` enum('active','deleted') NOT NULL DEFAULT 'active',
   PRIMARY KEY (`assessment_id`,`observation_id`,`source_role`),
   KEY `idx_bookassessmentsources_observation` (`observation_id`),
   CONSTRAINT `chk_bookassessmentsources_role` CHECK (`source_role` IN ('reference','used','replacement')),
