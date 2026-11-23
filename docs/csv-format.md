@@ -311,3 +311,17 @@ existing ID/title matches, preview and confirmation, and includes source details
 in the `Forrásrészletek (JSON)` column. Estimates, replacement references,
 preservation status and observation history are stored separately. See
 [valuation CSV fields and migration](valuations.md).
+
+## Optional print enrichment columns (3.8.1)
+
+Book CSV exports append `print_enrichment_csv_headers()` columns after the
+original fields, including the full `valuation_columns()` field set, source
+IDs/roles, `Forrásrészletek (JSON)`, `Értékelési előzmények (JSON)` and
+`Példánydokumentáció (JSON)`. Ebook-only rows leave them empty; mixed records
+export print-copy metadata. These CSVs use RFC double-quote escaping (PHP escape
+parameter empty), while ordinary import retains its legacy mode for older CSVs.
+
+The additional JSON columns archive data, not image/PDF bytes. Current valuation
+fields/sources can be loaded through **Import valuations** after restoring books
+with preserved IDs. Ordinary book import does not restore enrichment automatically;
+full history and physical-copy attachment restoration use SQL plus private files.

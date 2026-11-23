@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.8.1 - 2026-11-23
+
+- Added print-only enrichment columns to standalone book CSV, selected CSV+cover exports and the books.csv inside full backups: current valuation amounts/confidence/methods, preservation labels, dated source details, complete assessment-history JSON and physical-copy photo/invoice metadata including paper-original locations.
+- Ebook-only rows leave enrichment fields empty. Ebook-only detail and edit/view dialogs no longer show valuation/preservation or physical-copy documentation sections; mixed print/ebook records retain them.
+- Added RFC-compliant quoting for enriched CSV JSON and compatible detection in ordinary book import. Valuation import skips explicit ebook-only rows; ordinary import explains that valuation restoration is a separate action and attachment files require their own backup.
+- Added regression tests for all three CSV outputs, JSON containing quotes/backslashes, valuation CSV readability, print/ebook/mixed dialog visibility and preservation of historical price meaning.
+
 ## 3.8.0 - 2026-11-23
 
 - Added schema 3.5.0 / migration 06 for valuation imports, book assessment history, original-currency price observations and shared assessment/source links.

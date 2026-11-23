@@ -356,6 +356,7 @@ $rows = $st->fetchAll(PDO::FETCH_ASSOC);
 $book_ids = array_map(static fn (array $row): int => (int)$row['id'], $rows);
 $copy_map = fetch_book_copies_map($pdo, $book_ids);
 $authors_metadata_map = fetch_book_authors_metadata_map($pdo, $book_ids);
+$print_enrichment = print_enrichment_csv_map($pdo, $copy_map);
 $book_count = count($rows);
 
 if (!class_exists('ZipArchive')) {
@@ -392,8 +393,9 @@ if ($csv === false) {
 fputcsv($csv, [
     'ID', 'Title', 'Subtitle', 'Series', 'Language', 'Copy Count', 'Year', 'ISBN', 'LCCN', 'Notes',
     'Publisher', 'Authors', 'Authors Metadata JSON', 'Subjects', 'Loaned To', 'Loaned Date', 'Record Status',
-    'Bookcase', 'Shelf', 'Cover Image', 'Cover Filename', 'Copies JSON'
-], ',', '"', "\\");
+    'Bookcase', 'Shelf', 'Cover Image', 'Cover Filename', 'Copies JSON',
+    ...print_enrichment_csv_headers()
+], ',', '"', '');
 foreach ($rows as $r) {
     $copies = $copy_map[(int)$r['id']] ?? [];
     $authors_metadata_json = build_authors_metadata_json($authors_metadata_map[(int)$r['id']] ?? []);
@@ -422,8 +424,9 @@ foreach ($rows as $r) {
         $cover_fn,
         json_encode($copies, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
     ];
+    $line = array_merge($line, array_values($print_enrichment[(int)$r['id']] ?? array_fill_keys(print_enrichment_csv_headers(), '')));
     $line = array_map('sanitize_csv_value', $line);
-    fputcsv($csv, $line, ',', '"', "\\");
+    fputcsv($csv, $line, ',', '"', '');
 }
 fclose($csv);
 $zip->addFile($csv_path, 'data/books.csv');

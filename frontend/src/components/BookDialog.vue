@@ -295,8 +295,8 @@
           <div v-if="readonly" class="ro">{{ book.loaned_date || '—' }}</div>
           <input v-else type="date" v-model="form.loaned_date" />
         </div>
-        <BookValuation v-if="safeId && mode !== 'create'" :book-id="safeId" />
-        <CopyDocumentation v-if="safeId && mode !== 'create'" :book-id="safeId" :can-manage="canManage && !readonly" />
+        <BookValuation v-if="hasPrintCopy && safeId && mode !== 'create'" :book-id="safeId" />
+        <CopyDocumentation v-if="hasPrintCopy && safeId && mode !== 'create'" :book-id="safeId" :can-manage="canManage && !readonly" />
       </section>
 
       <footer class="modal-footer">
@@ -557,6 +557,7 @@ const readonly = computed(() => props.mode === "view" || !props.canManage);
 const allowAuthorCreate = computed(() => (form.value.authors || "").trim().length >= 2);
 const safeId = computed(() => props.book?.id || props.book?.book_id || null);
 const bookCopies = computed(() => Array.isArray(props.book?.copies) ? props.book.copies : []);
+const hasPrintCopy = computed(() => bookCopies.value.some(copy => String(copy.format).toLowerCase() === "print"));
 const authorDisplayRows = computed(() => authorsDetailFromBook(props.book || {}));
 const authorAliasRows = computed(() => {
   if (readonly.value) {

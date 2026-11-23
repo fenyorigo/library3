@@ -238,6 +238,7 @@ try {
     $book_ids = array_map(static fn (array $row): int => (int)$row['id'], $rows);
     $copy_map = fetch_book_copies_map($pdo, $book_ids);
     $authors_metadata_map = fetch_book_authors_metadata_map($pdo, $book_ids);
+$print_enrichment = print_enrichment_csv_map($pdo, $copy_map);
 
 } catch (Throwable $e) {
     echo "ERROR: " . $e->getMessage();
@@ -259,8 +260,9 @@ $bytes_written = 0;
 $bytes = fputcsv($out, [
     'ID', 'Title', 'Subtitle', 'Series', 'Language', 'Copy Count', 'Year', 'ISBN', 'LCCN', 'Notes',
     'Publisher', 'Authors', 'Authors Metadata JSON', 'Subjects', 'Loaned To', 'Loaned Date', 'Record Status',
-    'Bookcase', 'Shelf', 'Cover Image', 'Cover Filename', 'Copies JSON'
-], ',', '"', "\\");
+    'Bookcase', 'Shelf', 'Cover Image', 'Cover Filename', 'Copies JSON',
+    ...print_enrichment_csv_headers()
+], ',', '"', '');
 $bytes_written += is_int($bytes) ? $bytes : 0;
 
 foreach ($rows as $r) {
@@ -289,11 +291,12 @@ foreach ($rows as $r) {
         $r['bookcase_no'],
         $r['shelf_no'],
         $r['cover_image'],
-        $cover_fn,                    // <--- NEW FINAL COLUMN
+        $cover_fn,
         json_encode($copies, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
     ];
+    $row = array_merge($row, array_values($print_enrichment[(int)$r['id']] ?? array_fill_keys(print_enrichment_csv_headers(), '')));
     $row = array_map('sanitize_csv_value', $row);
-    $bytes = fputcsv($out, $row, ',', '"', "\\");
+    $bytes = fputcsv($out, $row, ',', '"', '');
     $bytes_written += is_int($bytes) ? $bytes : 0;
 }
 

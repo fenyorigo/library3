@@ -173,7 +173,7 @@ function write_csv(array $rows, array $header): string {
     $f = tmp_file('.csv');
     $h = fopen($f, 'w');
     // PHP 8.1+: pass escape arg explicitly to avoid deprecation
-    fputcsv($h, $header, ',', '"', '\\');
+    fputcsv($h, $header, ',', '"', '');
     foreach ($rows as $r) {
         // normalize row order to header
         $line = [];
@@ -181,7 +181,7 @@ function write_csv(array $rows, array $header): string {
             $val = $r[$col] ?? '';
             $line[] = sanitize_csv_value($val);
         }
-        fputcsv($h, $line, ',', '"', '\\');
+        fputcsv($h, $line, ',', '"', '');
     }
     fclose($h);
     return $f;
@@ -192,7 +192,7 @@ function add_if_exists(ZipArchive $zip, string $abs, string $in_zip): void {
 
 // ---------- data pulls ----------
 try {
-    // Books (include cover references; compute cover_file for CSV last column)
+    // Books (include cover references; compute cover_file for CSV)
     $books_sql = "
     SELECT
       b.book_id AS id,
@@ -245,8 +245,10 @@ foreach ($book_copies as $copy) {
     $book_copies_map[(int)$copy['book_id']][] = $copy;
 }
 
-$csv_books_header     = ['id','title','subtitle','series','record_status','language','copy_count','year_published','isbn','lccn','notes','publisher','loaned_to','loaned_date','bookcase_no','shelf_no','cover_image','cover_file','copies_json']; // cover_file last
-$csv_books_rows       = array_map(function($b) use ($book_copies_map) {
+$csv_books_header     = ['id','title','subtitle','series','record_status','language','copy_count','year_published','isbn','lccn','notes','publisher','loaned_to','loaned_date','bookcase_no','shelf_no','cover_image','cover_file','copies_json'];
+$print_enrichment = print_enrichment_csv_map($pdo, $book_copies_map);
+$csv_books_header = array_merge($csv_books_header, print_enrichment_csv_headers());
+$csv_books_rows       = array_map(function($b) use ($book_copies_map, $print_enrichment) {
     // cover_file is filename (last segment) or empty
     $cover_file = '';
     if (!empty($b['cover_image'])) {
@@ -254,7 +256,7 @@ $csv_books_rows       = array_map(function($b) use ($book_copies_map) {
         $cover_file = end($parts);
     }
     $copies = $book_copies_map[(int)$b['id']] ?? [];
-    return [
+    return array_merge([
         'id'             => $b['id'],
         'title'          => $b['title'],
         'subtitle'       => $b['subtitle'],
@@ -274,7 +276,7 @@ $csv_books_rows       = array_map(function($b) use ($book_copies_map) {
         'cover_image'    => $b['cover_image'],
         'cover_file'     => $cover_file,
         'copies_json'    => json_encode($copies, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-    ];
+    ], $print_enrichment[(int)$b['id']] ?? array_fill_keys(print_enrichment_csv_headers(), ''));
 }, $books);
 $csv_books_path       = write_csv($csv_books_rows, $csv_books_header);
 
@@ -348,7 +350,7 @@ BookCatalog – Full Backup
 Generated: {$generated_at}
 
 Includes:
-- books.csv  (flat export; last column is cover_file)
+- books.csv (flat export with print valuation/history and document metadata)
 - BookCopies.csv
 - authors.csv, publishers.csv, subjects.csv
 - Books_Authors.csv (with author_ord and author_alias), Books_Subjects.csv

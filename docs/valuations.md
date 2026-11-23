@@ -1,6 +1,6 @@
 # Könyvértékelések és megőrzési jelölések
 
-Alkalmazás: 3.8.0. Adatbázisséma: 3.5.0. Meglévő 3.4.0 adatbázishoz a
+Alkalmazás: 3.8.1. Adatbázisséma: 3.5.0. Meglévő 3.4.0 adatbázishoz a
 `00-basedata/sql/migrations/06_v3_add_book_valuations.sql` additív migráció kell.
 A migráció nem írja át a könyveket, példányokat, fotókat vagy számlákat.
 
@@ -95,9 +95,29 @@ szerepel, de nincs ellenőrizetlen aktuális ár vagy bizonyított elsőnyomás-
 ## Mentés és átvitel
 
 A teljes ZIP-mentés a négy tábla összes változatát a `data/valuations.json`
-manifesztbe teszi, ellenőrzőösszeggel. A szűrt könyv-CSV, a „CSV + covers”
-export és a statisztikai export követi a megőrzési szűrőt, de a szokásos könyv-CSV
-nem helyettesíti az értékelési mentést.
+manifesztbe teszi, ellenőrzőösszeggel. A megőrzési szűrőt a könyv-CSV és a
+„CSV + covers” export is követi.
+
+A 3.8.1-től a sima könyv-CSV, a kiválasztott ZIP könyv-CSV-je és a teljes ZIP
+`books.csv` fájlja is tartalmazza a nyomtatott példánnyal rendelkező rekordok
+értékelési mezőit. Az eredeti oszlopok után következnek a becslések, a
+megbízhatóság, a módszer, a megőrzési jelölés és a példánymegjegyzések.
+A `Forrásrészletek (JSON)` az eredeti forrásadatokat, az
+`Értékelési előzmények (JSON)` minden értékelési változatot és azok forrásait,
+a `Példánydokumentáció (JSON)` a nyomtatott példányok fotó-/PDF-hivatkozásait,
+feliratait, dokumentumadatait és a papírok lelőhelyét őrzi meg.
+A csak elektronikus példányt tartalmazó sorokban ezek a mezők üresek.
+Vegyes rekordnál a nyomtatott példányhoz tartozó információ megmarad.
+
+A fotó és PDF **fájlja nem tárolható a CSV-ben**. Az értékelési CSV-import a
+szokásos/selected könyvexport aktuális értékelési oszlopait és forrásait is
+beolvassa (eredeti könyvazonosítók szükségesek); az explicit ebook-only sorokat
+kihagyja. Az archivált előzmény-JSON és példánydokumentáció-JSON automatikus
+visszaállítását sem a szokásos könyvimport, sem az értékelési import nem végzi el.
+A könyvimport erre külön figyelmeztet. Teljes, kapcsolatokkal és előzményekkel
+együtt történő költözéshez továbbra is a teljes SQL-dump és a privát fájlok
+másolata az ellenőrzött eljárás. A CSV-s értékelés-visszaolvasáshoz célszerű
+előbb a **Print** szűrővel exportálni (20 MB importméret-korlát).
 
 Mac → Fedora átvitelhez a **teljes SQL-dumpot** használd, az eredeti azonosítók
 megőrzésével; ez mind a négy új táblát is átviszi. A `private-attachments/`
@@ -119,3 +139,7 @@ példánydokumentációs teszt. Ellenőrzi a friss séma/migráció egyezését,
 idempotenciát, közös forrásokat, árjelentést, aktuális változatra szűrést,
 előzménymegőrzést, ütközést, visszagörgetést, valamint a meglévő fotók és
 számlakapcsolatok változatlanságát.
+
+A `tests/print_csv_enrichment.php` teszt a `tests/valuation_import.php` után,
+ugyanazon elkülönített tesztadatbázison futtatható. Az adatlapok láthatóságát
+a `frontend/src/__tests__/print-sections.spec.js` teszt ellenőrzi.

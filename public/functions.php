@@ -2460,6 +2460,15 @@ function valuation_read_csv(string $path): array {
             $id = trim($input['ID']);
             if (!ctype_digit($id) || (int)$id<1 || (int)$id>4294967295 || isset($seen[(int)$id])) throw new InvalidArgumentException('Invalid or duplicate book ID: '.$id);
             $seen[(int)$id] = true;
+            // A whole-catalog export may contain ebook-only rows with empty enrichment.
+            $copies_text=trim($input['Copies JSON']??$input['copies_json']??'');
+            if ($copies_text!=='') {
+                $copies=json_decode($copies_text,true,64,JSON_THROW_ON_ERROR);
+                if (!is_array($copies) || !array_is_list($copies)) throw new InvalidArgumentException('Invalid Copies JSON.');
+                $has_print=false;
+                foreach ($copies as $copy) if (is_array($copy) && strtolower((string)($copy['format']??''))==='print') $has_print=true;
+                if (!$has_print) continue;
+            }
             $row = ['book_id'=>(int)$id, 'is_high_value'=>0, 'currency'=>'HUF'];
             foreach (valuation_columns() as $key=>$column) $row[$key] = trim($input[$column] ?? '') ?: null;
             foreach (['used_amount','replacement_amount'] as $key) $row[$key] = valuation_amount($row[$key]);
@@ -2597,5 +2606,72 @@ function valuation_list_marks(PDO $db, array $book_ids): array {
     $s=$db->prepare('SELECT a.book_id,a.is_high_value FROM BookAssessments a WHERE a.book_id IN ('.implode(',',array_fill(0,count($ids),'?')).') AND a.assessment_id=(SELECT MAX(v.assessment_id) FROM BookAssessments v WHERE v.book_id=a.book_id)');
     $s->execute($ids); $result=[];
     foreach ($s->fetchAll(PDO::FETCH_ASSOC) as $row) $result[(int)$row['book_id']]=$row;
+    return $result;
+}
+
+function print_enrichment_csv_headers(): array {
+    return array_merge(array_values(valuation_columns()), [
+        'Árforrások azonosítói','Használt irányérték forrása','Pótlási referencia forrása',
+        'Forrásrészletek (JSON)','Értékelési előzmények (JSON)','Példánydokumentáció (JSON)',
+    ]);
+}
+
+/** Additional CSV values only for records with an explicitly stored print copy. */
+function print_enrichment_csv_map(PDO $db, array $copy_map): array {
+    $book_ids=[]; $copy_books=[];
+    foreach ($copy_map as $book_id=>$copies) foreach ($copies as $copy) {
+        if (strtolower((string)($copy['format']??''))!=='print') continue;
+        $book_ids[(int)$book_id]=(int)$book_id;
+        if (!empty($copy['copy_id'])) $copy_books[(int)$copy['copy_id']]=(int)$book_id;
+    }
+    if (!$book_ids) return [];
+    $headers=print_enrichment_csv_headers(); $result=[];
+    foreach ($book_ids as $book_id) $result[$book_id]=array_fill_keys($headers,'');
+    $in=implode(',',array_fill(0,count($book_ids),'?'));$ids=array_values($book_ids);
+    if (table_column_exists($db,'BookAssessments','assessment_id')) {
+        $s=$db->prepare('SELECT a.*,i.content_sha256,i.original_filename,i.created_at imported_at FROM BookAssessments a JOIN ValuationImports i ON i.import_id=a.import_id WHERE a.book_id IN ('.$in.') ORDER BY a.assessment_id');
+        $s->execute($ids);$assessments=[];$by_book=[];
+        foreach ($s->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $row['original_data']=json_decode($row['raw_json'],true,64,JSON_THROW_ON_ERROR);unset($row['raw_json']);
+            $row['sources']=[];$assessments[(int)$row['assessment_id']]=$row;$by_book[(int)$row['book_id']][]=(int)$row['assessment_id'];
+        }
+        $s=$db->prepare('SELECT l.assessment_id,l.source_role,p.observation_id,p.source_key,p.raw_json FROM BookAssessmentSources l JOIN PriceObservations p ON p.observation_id=l.observation_id JOIN BookAssessments a ON a.assessment_id=l.assessment_id WHERE a.book_id IN ('.$in.') ORDER BY p.source_key,l.source_role');
+        $s->execute($ids);
+        foreach ($s->fetchAll(PDO::FETCH_ASSOC) as $source) {
+            $aid=(int)$source['assessment_id'];$oid=(int)$source['observation_id'];
+            if (!isset($assessments[$aid]['sources'][$oid])) {
+                $assessments[$aid]['sources'][$oid]=['observation'=>json_decode($source['raw_json'],true,64,JSON_THROW_ON_ERROR),'roles'=>[]];
+            }
+            $assessments[$aid]['sources'][$oid]['roles'][]=$source['source_role'];
+        }
+        foreach ($by_book as $book_id=>$aids) {
+            $current=$assessments[end($aids)];
+            foreach (valuation_columns() as $key=>$header) $result[$book_id][$header]=$current[$key]??'';
+            $all=[];$used=[];$replacement=[];$details=[];
+            foreach ($current['sources'] as $source) {
+                $key=$source['observation']['source_id'];$all[]=$key;$details[]=$source['observation'];
+                if (in_array('used',$source['roles'],true)) $used[]=$key;
+                if (in_array('replacement',$source['roles'],true)) $replacement[]=$key;
+            }
+            $result[$book_id]['Árforrások azonosítói']=implode('; ',$all);
+            $result[$book_id]['Használt irányérték forrása']=implode('; ',$used);
+            $result[$book_id]['Pótlási referencia forrása']=implode('; ',$replacement);
+            $result[$book_id]['Forrásrészletek (JSON)']=json_encode($details,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);
+            $history=[];
+            foreach ($aids as $aid) { $assessment=$assessments[$aid];$assessment['sources']=array_values($assessment['sources']);$history[]=$assessment; }
+            $result[$book_id]['Értékelési előzmények (JSON)']=json_encode($history,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);
+        }
+    }
+    if ($copy_books && table_column_exists($db,'BookCopyPhotos','photo_id')) {
+        $copy_ids=array_keys($copy_books);$cin=implode(',',array_fill(0,count($copy_ids),'?'));$copies=[];
+        foreach ($copy_books as $copy_id=>$book_id) $copies[$copy_id]=['copy_id'=>$copy_id,'book_id'=>$book_id,'photos'=>[],'documents'=>[]];
+        $s=$db->prepare('SELECT * FROM BookCopyPhotos WHERE copy_id IN ('.$cin.') ORDER BY copy_id,slot_number');$s->execute($copy_ids);
+        foreach ($s->fetchAll(PDO::FETCH_ASSOC) as $photo) $copies[(int)$photo['copy_id']]['photos'][]=$photo;
+        $s=$db->prepare('SELECT d.*,l.copy_id,l.item_reference,l.notes link_notes FROM AcquisitionDocuments d JOIN BookCopyAcquisitionDocuments l ON l.document_id=d.document_id WHERE l.copy_id IN ('.$cin.') ORDER BY l.copy_id,d.document_id');$s->execute($copy_ids);
+        foreach ($s->fetchAll(PDO::FETCH_ASSOC) as $document) $copies[(int)$document['copy_id']]['documents'][]=$document;
+        $documents=[];
+        foreach ($copies as $copy) $documents[$copy['book_id']][]=$copy;
+        foreach ($documents as $book_id=>$entries) $result[$book_id]['Példánydokumentáció (JSON)']=json_encode(['copies'=>$entries],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);
+    }
     return $result;
 }

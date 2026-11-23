@@ -1,11 +1,11 @@
-# Mac → Fedora átvitel, library3 3.8.0
+# Mac → Fedora átvitel, library3 3.8.1
 
 A referenciaoldal: `https://localhost:8444/`, projektje a Macen
-`/Users/bajanp/Projects/library3`. A 3.8.0 alkalmazás sémája 3.5.0.
+`/Users/bajanp/Projects/library3`. A 3.8.1 alkalmazás sémája 3.5.0.
 
 ## Mit kell átvinni?
 
-1. Az alkalmazás 3.8.0-s forrását, és újra kell fordítani a felületet. A
+1. Az alkalmazás 3.8.1-s forrását, és újra kell fordítani a felületet. A
    `public/dist/` a tárolóban figyelmen kívül hagyott build-kimenet:
    a forrás frissítése önmagában nem változtatja meg a kiszolgált oldalt.
 2. **A teljes adatbázis SQL-dumpját**, az eredeti azonosítókkal. Nem elegendő
@@ -60,7 +60,7 @@ npm ci
 npm run build
 ```
 
-Ezután az oldalt teljesen frissítsd, és ellenőrizd a fejlécben a **3.8.0**
+Ezután az oldalt teljesen frissítsd, és ellenőrizd a fejlécben a **3.8.1**
 verziót. Az alkalmazás olvasási/módosítási adatbázis-felhasználója eltérhet a
 dumpot vagy migrációt végző adminisztrátori felhasználótól.
 

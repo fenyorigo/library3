@@ -536,8 +536,9 @@ try {
     }
     $first_line = utf8_clean($strip_bom($first_line));
 
-    $comma_fields = str_getcsv($first_line, ',', '"', '\\');
-    $semi_fields = str_getcsv($first_line, ';', '"', '\\');
+    $csv_escape = str_contains($first_line, 'Forrásrészletek (JSON)') ? '' : '\\';
+    $comma_fields = str_getcsv($first_line, ',', '"', $csv_escape);
+    $semi_fields = str_getcsv($first_line, ';', '"', $csv_escape);
     $comma_norm = array_map($normalize_header, $comma_fields);
     $semi_norm = array_map($normalize_header, $semi_fields);
 
@@ -606,13 +607,14 @@ try {
             $warnings[] = ['line' => $line, 'warning' => $warning];
         }
     };
+    if ($csv_escape === '') $push_warning($warnings, 1, 'Valuation columns require the separate Import valuations action after book import with preserved IDs. Photo/PDF metadata does not restore attachment files or links automatically; use full SQL plus private attachments for migration.');
     $next_new_book_id = null;
     if ($id_mode === 'new_catalog') {
         $next_new_book_id = (int)$pdo->query('SELECT COALESCE(MAX(book_id), 0) + 1 FROM Books')->fetchColumn();
         if ($next_new_book_id < 1) $next_new_book_id = 1;
     }
 
-    while (($row = fgetcsv($fh, 0, $delimiter, '"', '\\')) !== false) {
+    while (($row = fgetcsv($fh, 0, $delimiter, '"', $csv_escape)) !== false) {
         $total++;
 
         if ($row === [null] || $row === false) { $skipped++; continue; }

@@ -187,7 +187,7 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.8.0**
+Current application version: **3.8.1**
 Current schema version: **3.5.0**
 
 ## Catalog Statistics CSV
@@ -279,3 +279,9 @@ exports and statistics. **Import valuations** is an admin action separate from
 **Import books**. See [valuation data and migration](docs/valuations.md).
 
 Transfer checklist: [Mac → Fedora, version 3.8.0](docs/mac-fedora-migration.md).
+
+As of 3.8.1, all book CSV outputs append print-only valuation/source fields plus
+assessment-history and photo/invoice metadata JSON. Ebook-only fields are empty,
+and physical-copy sections are hidden on ebook-only book dialogs. Binary files
+remain in the private attachment backup; ordinary book import does not restore
+the added metadata automatically. See [valuation CSV details](docs/valuations.md).

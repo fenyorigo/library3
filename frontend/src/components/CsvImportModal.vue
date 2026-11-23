@@ -17,6 +17,8 @@
           <code>Export selected books (CSV + covers)</code>.
         </p>
 
+        <p class="muted small">Valuation columns are restored separately with “Import valuations” after importing books with preserved IDs. Condition-photo/PDF metadata in CSV does not include the files; full SQL and private attachments remain the migration backup.</p>
+
         <label class="block">Import File
           <input type="file"
                  accept=".csv,.zip,text/csv,text/plain,application/zip"

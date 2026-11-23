@@ -82,8 +82,8 @@
             <div><strong>Loaned date</strong><div>{{ book.loaned_date || "—" }}</div></div>
           </div>
         </div>
-        <BookValuation v-if="book.id || book.book_id" :book-id="book.id || book.book_id" />
-        <CopyDocumentation v-if="book.id || book.book_id" :book-id="book.id || book.book_id" />
+        <BookValuation v-if="hasPrintCopy && (book.id || book.book_id)" :book-id="book.id || book.book_id" />
+        <CopyDocumentation v-if="hasPrintCopy && (book.id || book.book_id)" :book-id="book.id || book.book_id" />
       </section>
 
       <footer class="footer">
@@ -109,6 +109,7 @@ const props = defineProps({
 });
 
 const { book } = toRefs(props);
+const hasPrintCopy = computed(() => (book.value?.copies || []).some(copy => String(copy.format).toLowerCase() === "print"));
 
 const normalizeAuthorName = (value) => String(value || "").trim().replace(/\s+/g, " ");
 const normalizeAuthorAlias = (value) => String(value || "").trim().replace(/\s+/g, " ");
