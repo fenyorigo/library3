@@ -1,10 +1,20 @@
 # Changelog
 
+## 3.7.0 - 2026-11-23
+
+- Added full-size cover image downloads from book details and edit/view dialogs for both print and ebook records, including owner-supplied photographs.
+- Added schema 3.4.0 and additive migration 05: up to ten numbered condition photos per physical copy, acquisition documents with optional PDF scans and paper-original locations, and shared document links across multiple copies.
+- Added authenticated attachment downloads and admin-only uploads with CSRF checks, file validation, private storage outside the public web root, captions, optional photo dates, and shared paper-location editing.
+- Preserved existing copy IDs when saving book edits so photo and invoice links remain attached. New-book duplication and CSV import clear source copy IDs; documented copies are protected against automatic merging, format changes and quantity aggregation.
+- Included documentation manifests, private attachments and checksums in full ZIP backups. Missing attachment files fail the backup rather than silently producing an incomplete archive.
+- Documented SQL migration, Fedora filesystem/SELinux setup and transfer requirements. Documentation restore currently requires an ID-preserving full SQL dump plus the private attachment directory; ordinary CSV/ZIP import does not restore this evidence.
+- Added database regression tests for schema migration, the ten-photo limit, shared documents, stable copy IDs and rollback behavior.
+
 ## 3.6.0 - 2026-07-12
 
 - Added single ebook reading from the book list Actions column for PDF, EPUB, and RTF ebook copies.
 - PDF copies open inline in the browser; EPUB copies open in a simple server-rendered chapter reader with previous/next navigation and resource loading from the EPUB archive.
-- RTF copies show a clear "preview not supported yet" page; MOBI/AZW3 are intentionally excluded from the Read action and remain download-only.
+- RTF copies show a clear “preview not supported yet” page; MOBI/AZW3 are intentionally excluded from the Read action and remain download-only.
 
 ## 3.5.11 - 2026-07-11
 
@@ -52,7 +62,7 @@
 - Changed server-side selected export ZIP generation to use the same asynchronous background-job/polling flow as full backup, avoiding gateway timeout errors for large full/ebook exports.
 - Changed book import to run as an asynchronous background job with UI polling after upload staging, avoiding gateway timeout errors for large CSV/ZIP imports while preserving the existing import result summary.
 - Raised the packaged `.user.ini` large-import baseline to 2048M upload/POST and 768M memory, removed script-level `memory_limit` overrides from import/export/backup code, and added admin PHP runtime diagnostics for effective upload, POST, memory, and timeout settings.
-- Added central ebook repository availability checks, an admin "Check ebook repository" action, visible repository status, UI gating for repository-dependent ebook maintenance actions, and server-side guards to prevent false missing/orphan reports when the configured external repository is not mounted on the current host.
+- Added central ebook repository availability checks, an admin “Check ebook repository” action, visible repository status, UI gating for repository-dependent ebook maintenance actions, and server-side guards to prevent false missing/orphan reports when the configured external repository is not mounted on the current host.
 
 ## 3.5.0 - 2026-06-18
 
@@ -95,8 +105,8 @@ This release separates database cleanup, repository scanning, and integrity vali
 
 ## 3.3.0 - 2026-06-15
 
-- **Ebook cover extraction** as a separate admin action ("Extract ebook covers" button): polls books with epub/pdf copies that have no cover, extracts covers in batches of 5, shows live progress overlay. epub: ZipArchive + OPF manifest (EPUB3 `cover-image` property, EPUB2 `<meta name="cover">`). PDF: `magick` via `proc_open` with 10 s hard timeout (avoids PHP-FPM hangs from Ghostscript).
-- **Format filter** in book list: added "Ebooks" group option (matches all non-print formats); removed azw3, lit, odt individual options; options now use display-case labels (Print, Ebooks, EPUB, MOBI, PDF, DJVU, PRC, RTF).
+- **Ebook cover extraction** as a separate admin action (“Extract ebook covers” button): polls books with epub/pdf copies that have no cover, extracts covers in batches of 5, shows live progress overlay. epub: ZipArchive + OPF manifest (EPUB3 `cover-image` property, EPUB2 `<meta name=“cover”>`). PDF: `magick` via `proc_open` with 10 s hard timeout (avoids PHP-FPM hangs from Ghostscript).
+- **Format filter** in book list: added “Ebooks” group option (matches all non-print formats); removed azw3, lit, odt individual options; options now use display-case labels (Print, Ebooks, EPUB, MOBI, PDF, DJVU, PRC, RTF).
 - **schema.sql** regenerated from live DB as the new authoritative baseline; incremental migration files are no longer needed for fresh installs from this version onward.
 - README: expanded NeoFinder conversion section with full filename convention reference, TSV column table, language tag and metadata block documentation.
 - Fixed `show_file_size` preference not saving (missing `fd.append` in `api.js`).

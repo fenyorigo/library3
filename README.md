@@ -187,8 +187,8 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.6.0**
-Current schema version: **3.3.0**
+Current application version: **3.7.0**
+Current schema version: **3.4.0**
 
 ## Catalog Statistics CSV
 
@@ -260,3 +260,11 @@ Recommended workflow after manually changing the ebook repository on disk, espec
 3. Run **Full ebook integrity check** last. This validates the repaired catalog against the repository; after the first two steps, it should ideally finish with all known ebook copies present and matching their stored SHA256.
 
 SHA256 identifies physical file content. EPUB cover, metadata, OPF/package, OCR/text fixes, corruption, or file replacement can all change the checksum even when bibliographic metadata should remain unchanged.
+
+## Physical copy documentation
+
+Schema 3.4.0 adds up to ten condition photos per copy and shared acquisition documents
+with scanned files and paper-original locations. The book dialog supports photo/PDF uploads and shared invoice links; full backups include
+the evidence files. Transfer with a full SQL dump and the private attachment directory;
+the CSV importer does not restore documentation. See
+[copy documentation and migration instructions](docs/copy-documentation.md).

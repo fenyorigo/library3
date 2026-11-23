@@ -114,6 +114,10 @@ if (!$full_backup_cli_job && $server_side) {
         if ($config !== false && trim((string)$config) !== '') {
             $env_parts[] = 'BOOKCATALOG_CONFIG=' . escapeshellarg((string)$config);
         }
+        $attachment_root = getenv('BOOKCATALOG_ATTACHMENTS_DIR');
+        if ($attachment_root !== false && trim((string)$attachment_root) !== '') {
+            $env_parts[] = 'BOOKCATALOG_ATTACHMENTS_DIR=' . escapeshellarg((string)$attachment_root);
+        }
         $catalog_backup_dir = getenv('CATALOG_BACKUP_DIR');
         if ($catalog_backup_dir !== false && trim((string)$catalog_backup_dir) !== '') {
             $env_parts[] = 'CATALOG_BACKUP_DIR=' . escapeshellarg((string)$catalog_backup_dir);
@@ -226,6 +230,11 @@ try {
         : 'book_id, author_id, author_ord, NULL AS author_alias';
     $books_authors = $pdo->query("SELECT {$books_authors_cols} FROM Books_Authors ORDER BY book_id, author_ord")->fetchAll(PDO::FETCH_ASSOC);
     $books_subjects = $pdo->query("SELECT book_id, subject_id FROM Books_Subjects ORDER BY book_id, subject_id")->fetchAll(PDO::FETCH_ASSOC);
+    $copy_documentation = [];
+    foreach (['BookCopyPhotos', 'AcquisitionDocuments', 'BookCopyAcquisitionDocuments'] as $table) {
+        $exists = $pdo->prepare('SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?'); $exists->execute([$table]);
+        if ($exists->fetchColumn()) $copy_documentation[$table] = $pdo->query("SELECT * FROM `$table`")->fetchAll(PDO::FETCH_ASSOC);
+    }
 } catch (Throwable $e) {
     json_fail('Query failed: ' . $e->getMessage(), 500);
 }
@@ -419,6 +428,29 @@ foreach (array_keys($cover_paths) as $rel) {
     $abs = realpath(__DIR__ . '/' . $rel_clean);
     if ($abs === false || strpos($abs, $uploads_dir . '/') !== 0) continue;
     $sha($abs, $rel_clean);
+}
+
+// Preserve private copy evidence as a separate, ID-based full-backup section.
+if ($copy_documentation) {
+    $manifest = json_encode($copy_documentation, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    $zip->addFromString('data/copy_documentation.json', $manifest);
+    $checksums[] = hash('sha256', $manifest) . '  data/copy_documentation.json';
+    $packaged = [];
+    foreach (['BookCopyPhotos', 'AcquisitionDocuments'] as $table) {
+        foreach ($copy_documentation[$table] ?? [] as $row) {
+            $rel = $row['file_path'] ?? '';
+            if (!$rel || isset($packaged[$rel])) continue;
+            $abs = copy_documentation_file($rel);
+            if ($abs === null) {
+                $zip->close(); @unlink($zip_path);
+                json_fail('Backup incomplete: a documentation attachment is missing or unreadable.', 500);
+            }
+            $archive_path = 'copy-attachments/' . $rel;
+            if (!$zip->addFile($abs, $archive_path)) throw new RuntimeException('Unable to package documentation attachment');
+            $sha($abs, $archive_path); $packaged[$rel] = true;
+        }
+    }
+    $zip->addFromString('COPY-DOCUMENTATION-RESTORE.txt', "Copy documentation manifest uses the original copy_id and document_id values.\nThe CSV importer does NOT restore this section.\nFor transfer use a full SQL dump preserving IDs and copy the private-attachments directory.\nFiles in copy-attachments/ belong in the configured private attachment root, outside public/.\n");
 }
 
 // finally add sha256s.txt to ZIP

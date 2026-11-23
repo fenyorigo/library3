@@ -966,6 +966,9 @@ try {
             }
 
             if (bookcopies_table_exists($pdo)) {
+                // Imported copy IDs belong to the source catalog, not this new record.
+                foreach ($copies_in as &$imported_copy) unset($imported_copy["copy_id"]);
+                unset($imported_copy);
                 $saved_copies = replace_book_copies($pdo, $book_id, $copies_in);
                 $sync = sync_book_copy_derived_fields($pdo, $book_id, $saved_copies);
                 $copy_count = (int)($sync['copy_count'] ?? $copy_count);

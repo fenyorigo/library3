@@ -9,7 +9,7 @@ declare(strict_types=1);
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
 
-const SCHEMA_VERSION = '3.3.0';
+const SCHEMA_VERSION = '3.4.0';
 
 /* --------------------------- Error helpers --------------------------- */
 
@@ -1671,6 +1671,17 @@ function upsert_default_print_copy(PDO $pdo, int $book_id, int $quantity, ?strin
     $ins->execute([$book_id, $quantity, $physical_location]);
 }
 
+function copy_documentation_root(): string {
+    return rtrim(getenv('BOOKCATALOG_ATTACHMENTS_DIR') ?: dirname(__DIR__) . '/private-attachments', '/\\');
+}
+
+function copy_documentation_file(string $relative): ?string {
+    if (!preg_match('/^[a-f0-9]{32}\.(jpg|png|webp|pdf)$/D', $relative)) return null;
+    $root = realpath(copy_documentation_root());
+    $file = $root ? realpath($root . '/' . $relative) : false;
+    return $file && dirname($file) === $root && is_file($file) && is_readable($file) ? $file : null;
+}
+
 function replace_book_copies(PDO $pdo, int $book_id, array $copies): array {
     if (!bookcopies_table_exists($pdo)) return [];
 
@@ -1686,9 +1697,6 @@ function replace_book_copies(PDO $pdo, int $book_id, array $copies): array {
         ]);
     }
 
-    $del = $pdo->prepare('DELETE FROM BookCopies WHERE book_id = ?');
-    $del->execute([$book_id]);
-
     $has_fs = bookcopies_has_file_size($pdo);
     $has_sha = bookcopies_has_sha256($pdo);
     $columns = ['book_id', 'format', 'quantity', 'physical_location', 'file_path'];
@@ -1700,18 +1708,62 @@ function replace_book_copies(PDO $pdo, int $book_id, array $copies): array {
     $placeholders = implode(', ', array_fill(0, count($columns) - 2, '?')) . ', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP';
     $ins = $pdo->prepare('INSERT INTO BookCopies (' . implode(', ', $columns) . ') VALUES (' . $placeholders . ')');
 
-    foreach ($norm as $copy) {
-        $params = [
-            $book_id,
-            $copy['format'],
-            $copy['quantity'],
-            $copy['physical_location'],
-            $copy['file_path'],
-        ];
-        if ($has_fs) $params[] = $copy['file_size'];
-        if ($has_sha) $params[] = $copy['sha256'];
-        $params[] = $copy['notes'];
-        $ins->execute($params);
+    $owns_transaction = !$pdo->inTransaction();
+    if ($owns_transaction) $pdo->beginTransaction();
+    try {
+        $lock = $pdo->prepare('SELECT book_id FROM Books WHERE book_id = ? FOR UPDATE');
+        $lock->execute([$book_id]);
+        if (!$lock->fetchColumn()) throw new InvalidArgumentException('Book not found');
+        $existing_stmt = $pdo->prepare('SELECT copy_id FROM BookCopies WHERE book_id = ? FOR UPDATE');
+        $existing_stmt->execute([$book_id]);
+        $existing = array_fill_keys($existing_stmt->fetchAll(PDO::FETCH_COLUMN), true);
+        $seen = [];
+        $has_documentation = $pdo->query("SHOW TABLES LIKE 'BookCopyPhotos'")->fetchColumn() !== false;
+        foreach ($norm as $copy) {
+            $id = $copy['copy_id'];
+            if ($id !== null && (!isset($existing[$id]) || isset($seen[$id]))) {
+                throw new InvalidArgumentException('Invalid or repeated copy_id for this book');
+            }
+            if ($id !== null) {
+                $seen[$id] = true;
+                if ($has_documentation && ($copy['format'] !== 'print' || $copy['quantity'] !== 1)) {
+                    $attached = $pdo->prepare('SELECT (SELECT COUNT(*) FROM BookCopyPhotos WHERE copy_id=?) + (SELECT COUNT(*) FROM BookCopyAcquisitionDocuments WHERE copy_id=?)');
+                    $attached->execute([$id, $id]);
+                    if ((int)$attached->fetchColumn() > 0) throw new RuntimeException('A documented physical copy must remain an individual print copy.', 409);
+                }
+            }
+        }
+        $update_columns = array_values(array_filter($columns, fn($c) => !in_array($c, ['book_id', 'created_at', 'updated_at'], true)));
+        $upd = $pdo->prepare('UPDATE BookCopies SET ' . implode(', ', array_map(fn($c) => "$c = ?", $update_columns)) . ', updated_at = CURRENT_TIMESTAMP WHERE copy_id = ? AND book_id = ?');
+        foreach ($norm as $copy) {
+            $params = [
+                $book_id,
+                $copy['format'],
+                $copy['quantity'],
+                $copy['physical_location'],
+                $copy['file_path'],
+            ];
+            if ($has_fs) $params[] = $copy['file_size'];
+            if ($has_sha) $params[] = $copy['sha256'];
+            $params[] = $copy['notes'];
+            if ($copy['copy_id'] !== null) {
+                array_shift($params);
+                $params[] = $copy['copy_id'];
+                $params[] = $book_id;
+                $upd->execute($params);
+            } else {
+                $ins->execute($params);
+            }
+        }
+        // RESTRICT foreign keys protect copies with attached evidence from deletion.
+        $del = $pdo->prepare('DELETE FROM BookCopies WHERE copy_id = ? AND book_id = ?');
+        foreach ($existing as $id => $_) {
+            if (!isset($seen[$id])) $del->execute([$id, $book_id]);
+        }
+        if ($owns_transaction) $pdo->commit();
+    } catch (Throwable $e) {
+        if ($owns_transaction && $pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
     }
 
     return fetch_book_copies($pdo, $book_id);

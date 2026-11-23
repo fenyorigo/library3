@@ -23,6 +23,7 @@ cookies.txt
 *.sql
 *.sql.gz
 !00-basedata/sql/schema.sql
+!00-basedata/sql/migrations/05_v3_add_copy_photos_and_acquisition_documents.sql
 *.tgz
 
 # Runtime / OS noise
@@ -54,3 +55,6 @@ import_staged_covers.php
 
 # User profile logos
 public/user-assets/
+
+# Private physical-copy photos and invoice scans
+/private-attachments/

@@ -150,6 +150,14 @@ try {
         }
     }
 
+    if ($pdo->query("SHOW TABLES LIKE 'BookCopyPhotos'")->fetchColumn()) {
+        $protected = $pdo->prepare('SELECT COUNT(*) FROM BookCopies c WHERE c.book_id = ? AND (EXISTS (SELECT 1 FROM BookCopyPhotos p WHERE p.copy_id=c.copy_id) OR EXISTS (SELECT 1 FROM BookCopyAcquisitionDocuments d WHERE d.copy_id=c.copy_id))');
+        foreach ($all_ids as $protected_book_id) {
+            $protected->execute([$protected_book_id]);
+            if ((int)$protected->fetchColumn() > 0) throw new RuntimeException('Books with copy documentation cannot be merged automatically; preserve the individual copies.', 409);
+        }
+    }
+
     $authors_sql = "
         SELECT ba.book_id, ba.author_id, ba.author_ord,
                COALESCE(NULLIF(TRIM(a.sort_name), ''), NULLIF(TRIM(a.name), ''), '') AS author_key_name,

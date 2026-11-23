@@ -19,6 +19,9 @@
               alt="Cover"
             />
             <div class="muted small">{{ coverFileName }}</div>
+            <div v-if="book.cover_image">
+              <a :href="assetUrl(book.cover_image)" :download="coverDownloadName">Download cover</a>
+            </div>
           </div>
 
           <!-- Metadata -->
@@ -79,6 +82,7 @@
             <div><strong>Loaned date</strong><div>{{ book.loaned_date || "—" }}</div></div>
           </div>
         </div>
+        <CopyDocumentation v-if="book.id || book.book_id" :book-id="book.id || book.book_id" />
       </section>
 
       <footer class="footer">
@@ -91,6 +95,7 @@
 
 <script setup lang="js">
 import { computed, onBeforeUnmount, onMounted, toRefs } from "vue";
+import CopyDocumentation from "./CopyDocumentation.vue";
 import { assetUrl } from "../api";
 
 const emit = defineEmits(["close", "edit"]);
@@ -133,6 +138,11 @@ const coverFileName = computed(() => {
   const p = (book.value && (book.value.cover_thumb || book.value.cover_image)) || "";
   if (!p) return "default-cover.jpg (fallback)";
   try { return p.split("/").pop(); } catch { return "cover.jpg"; }
+});
+
+const coverDownloadName = computed(() => {
+  const filename = (book.value?.cover_image || '').split('/').pop()?.split(/[?#]/)[0] || 'cover';
+  return `book-${book.value?.id || book.value?.book_id}-${filename}`;
 });
 
 const onKeydown = (e) => {

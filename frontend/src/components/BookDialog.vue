@@ -18,6 +18,9 @@
             <div class="ph" v-if="!coverSrc">No image</div>
             <img v-else :src="coverSrc" alt="Cover image" />
             <div class="fn" v-if="coverFileName">{{ coverFileName }}</div>
+            <div v-if="mode !== 'create' && coverDownloadUrl" class="cover-download">
+              <a :href="coverDownloadUrl" :download="coverDownloadName">Download cover</a>
+            </div>
 
             <!-- Uploads (edit uploads immediately, create attaches on save) -->
             <div class="upload" v-if="!readonly && canManage">
@@ -292,6 +295,7 @@
           <div v-if="readonly" class="ro">{{ book.loaned_date || '—' }}</div>
           <input v-else type="date" v-model="form.loaned_date" />
         </div>
+        <CopyDocumentation v-if="safeId && mode !== 'create'" :book-id="safeId" :can-manage="canManage && !readonly" />
       </section>
 
       <footer class="modal-footer">
@@ -343,6 +347,8 @@
 <script setup lang="js">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { apiUrl, assetUrl, bumpAssetCacheVersion, csrfHeader } from "../api";
+
+import CopyDocumentation from "./CopyDocumentation.vue";
 
 const LANGUAGE_OPTIONS = [
   { value: "unknown", label: "Unknown" },
@@ -495,7 +501,7 @@ const initForm = (b = {}, mode = "view") => {
       loaned_date: b.loaned_date || "",
       bookcase_no: b.bookcase_no ?? null,
       shelf_no: b.shelf_no ?? null,
-      copies: initCopies(b),
+      copies: initCopies(b).map(copy => ({ ...copy, copy_id: null })),
     };
   }
   return {
@@ -589,6 +595,14 @@ const coverFileName = computed(() => {
   if (coverFile.value && coverFile.value.name) return coverFile.value.name;
   const p = coverThumbOverride.value || coverImageOverride.value || props.book?.cover_thumb || props.book?.cover_image;
   return p ? p.split("/").pop() : "default-cover.jpg (fallback)";
+});
+
+// Download the stored full-size image, independently of the preview thumbnail.
+const coverDownloadPath = computed(() => coverImageOverride.value || props.book?.cover_image || '');
+const coverDownloadUrl = computed(() => coverDownloadPath.value ? assetUrl(coverDownloadPath.value) : '');
+const coverDownloadName = computed(() => {
+  const filename = coverDownloadPath.value.split('/').pop()?.split(/[?#]/)[0] || 'cover';
+  return `book-${safeId.value}-${filename}`;
 });
 
 const resetCoverSelection = () => {
