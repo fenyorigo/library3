@@ -113,6 +113,9 @@ try {
     }
 
     $pdo = pdo();
+    if (table_column_exists($pdo, 'BookAssessments', 'assessment_id') && (int)$pdo->query('SELECT COUNT(*) FROM BookAssessments')->fetchColumn() > 0) {
+        json_fail('Catalog has valuation history. Archive or migrate that evidence before purging the catalog.', 409);
+    }
     $tables = [
         'Books_Authors',
         'Books_Subjects',

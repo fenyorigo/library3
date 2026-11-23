@@ -68,6 +68,16 @@
             <option value="all">All</option>
           </select>
         </label>
+        <label class="inline-filter">
+          <span>Értékelés / megőrzés</span>
+          <select v-model="valueFilter" :disabled="loading" @change="onSearch">
+            <option value="">Mind</option>
+            <option value="high_value">Nagy értékű – külön kezelendő</option>
+            <option value="priority">Elsőként ellenőrizendő</option>
+            <option value="estimated">Van árbecslés / pótlási referencia</option>
+          </select>
+        </label>
+        <button v-if="isAdmin" @click="valuationImportOpen = true">Import valuations</button>
         <button @click="resetSort">Reset sort</button>
         <button v-if="isAdmin" class="primary" @click="openAdd">+ Add Book</button>
         <button v-if="isAdmin" @click="openCsvImport">Import books</button>
@@ -155,6 +165,8 @@
       @duplicate="duplicateFrom"
       @updated="onBookImageUpdated"
     />
+
+    <ValuationImportModal v-if="valuationImportOpen" @close="valuationImportOpen = false" @imported="reload" />
 
     <CsvImportModal
       v-if="showCsvImport"
@@ -309,6 +321,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import BookDetailModal from "./components/BookDetailModal.vue";
 import BookDialog from "./components/BookDialog.vue";
+import ValuationImportModal from "./components/ValuationImportModal.vue";
 import BookList from "./components/BookList.vue";
 import CsvImportModal from "./components/CsvImportModal.vue";
 import OrphanMaintenance from "./components/OrphanMaintenance.vue";
@@ -347,6 +360,8 @@ const dir = ref("asc");
 const q = ref("");
 const formatFilter = ref("");
 const languageFilter = ref("");
+const valueFilter = ref("");
+const valuationImportOpen = ref(false);
 const recordStatusFilter = ref("active");
 const loading = ref(false);
 const ignorePopStateOnce = ref(false);
@@ -809,6 +824,7 @@ const reload = async () => {
       q: q.value || undefined,
       format: formatFilter.value || undefined,
       language: languageFilter.value || undefined,
+      value_filter: valueFilter.value || undefined,
       record_status: isAdmin.value ? recordStatusFilter.value : "active",
       page: page.value,
       per: perPage.value,
@@ -829,6 +845,7 @@ const reload = async () => {
       if (q.value) p.set("q", q.value);
       if (formatFilter.value) p.set("format", formatFilter.value);
       if (languageFilter.value) p.set("language", languageFilter.value);
+      if (valueFilter.value) p.set("value_filter", valueFilter.value);
       if (isAdmin.value && recordStatusFilter.value !== "active") p.set("record_status", recordStatusFilter.value);
       if (page.value !== 1) p.set("page", String(page.value));
       if (perPage.value !== 25) p.set("per_page", String(perPage.value));
@@ -861,6 +878,7 @@ const applyUrlParams = () => {
   }
   formatFilter.value = p.get("format") || "";
   languageFilter.value = p.get("language") || "";
+  valueFilter.value = p.get("value_filter") || "";
   recordStatusFilter.value = p.get("record_status") || "active";
   if (p.has("page")) page.value = Math.max(1, parseInt(p.get("page") || "1", 10) || 1);
   if (p.has("per_page")) {
@@ -877,6 +895,7 @@ const onPopState = () => {
   q.value = sp.get("q") || "";
   formatFilter.value = sp.get("format") || "";
   languageFilter.value = sp.get("language") || "";
+  valueFilter.value = sp.get("value_filter") || "";
   recordStatusFilter.value = sp.get("record_status") || "active";
   page.value = Math.max(1, parseInt(sp.get("page") || "1", 10) || 1);
   perPage.value = Math.max(1, parseInt(sp.get("per_page") || "25", 10) || 25);
@@ -895,6 +914,7 @@ const clearSearch = () => {
   q.value = "";
   formatFilter.value = "";
   languageFilter.value = "";
+  valueFilter.value = "";
   page.value = 1;
   reload();
 };
@@ -987,6 +1007,7 @@ const onExportSelectedBundle = async () => {
   if (q.value) params.q = q.value;
   if (formatFilter.value) params.format = formatFilter.value;
   if (languageFilter.value) params.language = languageFilter.value;
+  if (valueFilter.value) params.value_filter = valueFilter.value;
   if (recordStatusFilter.value) params.record_status = recordStatusFilter.value;
   const url = buildBackupUrl("export_selected_bundle.php", params);
   await runBackupFlow(url, "selected CSV + covers");
@@ -998,6 +1019,7 @@ const onExportCatalogStatistics = () => {
   if (q.value) params.q = q.value;
   if (formatFilter.value) params.format = formatFilter.value;
   if (languageFilter.value) params.language = languageFilter.value;
+  if (valueFilter.value) params.value_filter = valueFilter.value;
   if (recordStatusFilter.value) params.record_status = recordStatusFilter.value;
   const url = buildBackupUrl("catalog_statistics.php", params);
   window.location.assign(url.toString());

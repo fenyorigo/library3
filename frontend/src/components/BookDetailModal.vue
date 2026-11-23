@@ -82,6 +82,7 @@
             <div><strong>Loaned date</strong><div>{{ book.loaned_date || "—" }}</div></div>
           </div>
         </div>
+        <BookValuation v-if="book.id || book.book_id" :book-id="book.id || book.book_id" />
         <CopyDocumentation v-if="book.id || book.book_id" :book-id="book.id || book.book_id" />
       </section>
 
@@ -96,6 +97,7 @@
 <script setup lang="js">
 import { computed, onBeforeUnmount, onMounted, toRefs } from "vue";
 import CopyDocumentation from "./CopyDocumentation.vue";
+import BookValuation from "./BookValuation.vue";
 import { assetUrl } from "../api";
 
 const emit = defineEmits(["close", "edit"]);

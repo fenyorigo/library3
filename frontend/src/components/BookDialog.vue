@@ -295,6 +295,7 @@
           <div v-if="readonly" class="ro">{{ book.loaned_date || '—' }}</div>
           <input v-else type="date" v-model="form.loaned_date" />
         </div>
+        <BookValuation v-if="safeId && mode !== 'create'" :book-id="safeId" />
         <CopyDocumentation v-if="safeId && mode !== 'create'" :book-id="safeId" :can-manage="canManage && !readonly" />
       </section>
 
@@ -349,6 +350,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { apiUrl, assetUrl, bumpAssetCacheVersion, csrfHeader } from "../api";
 
 import CopyDocumentation from "./CopyDocumentation.vue";
+import BookValuation from "./BookValuation.vue";
 
 const LANGUAGE_OPTIONS = [
   { value: "unknown", label: "Unknown" },

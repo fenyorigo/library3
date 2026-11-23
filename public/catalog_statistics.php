@@ -82,6 +82,7 @@ if (books_table_has_record_status($pdo)) {
     }
 }
 
+try { valuation_add_filter($pdo, $where_chunks, $params); } catch (InvalidArgumentException $e) { json_fail($e->getMessage(), 400); }
 $where_sql = $where_chunks ? ('WHERE ' . implode(' AND ', $where_chunks)) : '';
 $book_from = "FROM Books b LEFT JOIN Publishers p ON p.publisher_id = b.publisher_id {$where_sql}";
 $copy_from = "FROM BookCopies bc JOIN Books b ON b.book_id = bc.book_id LEFT JOIN Publishers p ON p.publisher_id = b.publisher_id {$where_sql}";

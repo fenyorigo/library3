@@ -181,6 +181,7 @@
               </div>
               <div class="twrap">
                 <div><strong>{{ b.title }}</strong></div>
+                <div v-if="Number(b.is_high_value) === 1" class="preservation-mark">Nagy értékű – külön kezelendő</div>
                 <div class="muted small" v-if="b.format_summary">{{ b.format_summary }}</div>
               </div>
             </div>

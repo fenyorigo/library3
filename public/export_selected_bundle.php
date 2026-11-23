@@ -299,6 +299,7 @@ if ($language_filter !== '') {
     $where_chunks[] = "b.language = :language_filter";
     $params['language_filter'] = $language_filter;
 }
+try { valuation_add_filter($pdo, $where_chunks, $params); } catch (InvalidArgumentException $e) { json_fail($e->getMessage(), 400); }
 $where_sql = $where_chunks ? ('WHERE ' . implode(' AND ', $where_chunks)) : '';
 
 $sql = "

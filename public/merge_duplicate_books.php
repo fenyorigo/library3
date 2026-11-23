@@ -158,6 +158,14 @@ try {
         }
     }
 
+    if (table_column_exists($pdo, 'BookAssessments', 'assessment_id')) {
+        $protected = $pdo->prepare('SELECT COUNT(*) FROM BookAssessments WHERE book_id=?');
+        foreach ($all_ids as $protected_book_id) {
+            $protected->execute([$protected_book_id]);
+            if ((int)$protected->fetchColumn() > 0) throw new RuntimeException('Books with valuation history cannot be merged automatically; preserve their source records.', 409);
+        }
+    }
+
     $authors_sql = "
         SELECT ba.book_id, ba.author_id, ba.author_ord,
                COALESCE(NULLIF(TRIM(a.sort_name), ''), NULLIF(TRIM(a.name), ''), '') AS author_key_name,

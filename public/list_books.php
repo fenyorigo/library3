@@ -233,6 +233,7 @@ if (books_table_has_record_status($pdo)) {
   }
 }
 
+try { valuation_add_filter($pdo, $where_chunks, $params); } catch (InvalidArgumentException $e) { json_fail($e->getMessage(), 400); }
 $where_sql = $where_chunks ? ('WHERE ' . implode(' AND ', $where_chunks)) : '';
 
 /**
@@ -370,8 +371,10 @@ try {
     $rows = $st->fetchAll(PDO::FETCH_ASSOC);
 
     $copy_map = fetch_book_copies_map($pdo, array_map(static fn (array $row): int => (int)$row['id'], $rows));
+    $valuation_marks = valuation_list_marks($pdo, array_column($rows, 'id'));
     foreach ($rows as &$row) {
         $row['has_cover'] = !empty($row['cover_image']);
+        $row['is_high_value'] = (int)($valuation_marks[(int)$row['id']]['is_high_value'] ?? 0);
         $row['record_status'] = normalize_book_record_status($row['record_status'] ?? 'active');
         $row['language'] = normalize_book_language($row['language'] ?? 'unknown');
         $row['copies'] = $copy_map[(int)$row['id']] ?? [];

@@ -187,8 +187,8 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.7.0**
-Current schema version: **3.4.0**
+Current application version: **3.8.0**
+Current schema version: **3.5.0**
 
 ## Catalog Statistics CSV
 
@@ -268,3 +268,14 @@ with scanned files and paper-original locations. The book dialog supports photo/
 the evidence files. Transfer with a full SQL dump and the private attachment directory;
 the CSV importer does not restore documentation. See
 [copy documentation and migration instructions](docs/copy-documentation.md).
+
+## Book valuations and preservation
+
+Version 3.8.0 (schema 3.5.0) adds valuation CSV preview/import, source observations,
+assessment history and high-value preservation filters. The book detail/edit dialog
+shows estimates and replacement references separately from historical purchase and
+asking prices. The **Értékelés / megőrzés** list filter also applies to selected
+exports and statistics. **Import valuations** is an admin action separate from
+**Import books**. See [valuation data and migration](docs/valuations.md).
+
+Transfer checklist: [Mac → Fedora, version 3.8.0](docs/mac-fedora-migration.md).

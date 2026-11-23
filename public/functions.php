@@ -9,7 +9,7 @@ declare(strict_types=1);
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
 
-const SCHEMA_VERSION = '3.4.0';
+const SCHEMA_VERSION = '3.5.0';
 
 /* --------------------------- Error helpers --------------------------- */
 
@@ -2402,4 +2402,200 @@ function process_cover_upload(PDO $pdo, int $book_id, array $file, int $thumb_ma
         'thumb' => $rel_thm,
         'affected_rows' => $upd->rowCount(),
     ];
+}
+
+/* Book valuations: imported evidence and estimates remain separate from catalog metadata. */
+function valuation_normalize(string $value): string {
+    if (class_exists('Normalizer')) $value = Normalizer::normalize($value, Normalizer::FORM_C) ?: $value;
+    return mb_strtolower(trim(preg_replace('/\s+/u', ' ', $value) ?? $value), 'UTF-8');
+}
+
+function valuation_amount($value): ?string {
+    if ($value === null || trim((string)$value) === '') return null;
+    $value = str_replace(',', '.', trim((string)$value));
+    if (!preg_match('/^\d{1,12}(?:\.\d{1,2})?$/D', $value)) throw new InvalidArgumentException('Invalid amount: use a nonnegative number with at most two decimals; leave unknown prices empty.');
+    $parts = explode('.', $value);
+    return ltrim($parts[0], '0') . (ltrim($parts[0], '0') === '' ? '0' : '') . '.' . str_pad($parts[1] ?? '', 2, '0');
+}
+
+function valuation_date($value): ?string {
+    $value = trim((string)$value);
+    if ($value === '') return null;
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/D', $value) || !checkdate((int)substr($value,5,2),(int)substr($value,8,2),(int)substr($value,0,4))) throw new InvalidArgumentException('Invalid observation date; use YYYY-MM-DD or leave empty.');
+    return $value;
+}
+
+function valuation_columns(): array {
+    return [
+        'used_amount'=>'Használtpiaci irányérték (Ft; becslés)', 'replacement_amount'=>'Pótlási könyvár (Ft; referencia)',
+        'used_confidence'=>'Használt becslés megbízhatósága', 'replacement_confidence'=>'Pótlási ár megbízhatósága',
+        'used_method'=>'Becslés módszere', 'replacement_method'=>'Pótlás módja', 'priority'=>'Kiemelés',
+        'reason'=>'Kiemelés indoka / eltérés', 'heirs_action'=>'Örökösök teendője', 'group_key'=>'Együtt vizsgálandó csoport',
+        'research_status'=>'Kutatás állapota', 'owner_condition'=>'Példányállapot (kitöltendő)',
+        'provenance'=>'Beszerzési előzmény (tulajdonosi közlés)', 'completeness'=>'Kiadás teljessége / eladói állítás',
+        'checked_on'=>'Forrás megtekintése', 'preservation_label'=>'Megőrzési értékkategória',
+    ];
+}
+
+function valuation_read_csv(string $path): array {
+    if (!is_file($path) || filesize($path) > 20*1024*1024) throw new InvalidArgumentException('Valuation CSV limit: 20 MB.');
+    $fh = fopen($path, 'rb');
+    if (!$fh) throw new RuntimeException('Unable to read valuation CSV.');
+    try {
+        $line = fgets($fh);
+        if ($line === false) throw new InvalidArgumentException('Empty CSV.');
+        $line = preg_replace('/^\xEF\xBB\xBF/', '', $line);
+        $delimiter = count(str_getcsv($line, ';', '"', '')) > count(str_getcsv($line, ',', '"', '')) ? ';' : ',';
+        rewind($fh); $header = fgetcsv($fh, 0, $delimiter, '"', '');
+        $header[0] = preg_replace('/^\xEF\xBB\xBF/', '', $header[0]);
+        if (count(array_unique($header)) !== count($header)) throw new InvalidArgumentException('Duplicate CSV column.');
+        foreach (['ID','Title','Authors','Publisher','Year','Használtpiaci irányérték (Ft; becslés)','Pótlási könyvár (Ft; referencia)','Megőrzési értékkategória'] as $required) {
+            if (!in_array($required, $header, true)) throw new InvalidArgumentException('Missing valuation column: '.$required);
+        }
+        $rows = []; $seen = []; $source_versions = [];
+        while (($fields = fgetcsv($fh, 0, $delimiter, '"', '')) !== false) {
+            if (count($fields) === 1 && trim((string)$fields[0]) === '') continue;
+            if (count($fields) !== count($header)) throw new InvalidArgumentException('CSV field count differs at row '.(count($rows)+2));
+            $input = array_combine($header, $fields);
+            $id = trim($input['ID']);
+            if (!ctype_digit($id) || (int)$id<1 || (int)$id>4294967295 || isset($seen[(int)$id])) throw new InvalidArgumentException('Invalid or duplicate book ID: '.$id);
+            $seen[(int)$id] = true;
+            $row = ['book_id'=>(int)$id, 'is_high_value'=>0, 'currency'=>'HUF'];
+            foreach (valuation_columns() as $key=>$column) $row[$key] = trim($input[$column] ?? '') ?: null;
+            foreach (['used_amount','replacement_amount'] as $key) $row[$key] = valuation_amount($row[$key]);
+            $row['checked_on'] = valuation_date($row['checked_on']);
+            $row['is_high_value'] = $row['preservation_label'] === 'Nagy értékű – külön kezelendő' ? 1 : 0;
+            if ($row['preservation_label'] !== null && !$row['is_high_value']) throw new InvalidArgumentException('Unrecognized preservation category for book '.$id);
+            foreach (['preservation_label'=>190,'priority'=>100,'group_key'=>190] as $key=>$length) {
+                if (mb_strlen((string)$row[$key])>$length) throw new InvalidArgumentException('Field too long: '.$key);
+            }
+            $source_text = trim($input['Forrásrészletek (JSON)'] ?? '');
+            $sources = $source_text === '' ? [] : json_decode($source_text, true, 64, JSON_THROW_ON_ERROR);
+            if (!is_array($sources) || !array_is_list($sources) || count($sources)>500) throw new InvalidArgumentException('Invalid source details for book '.$id);
+            $source_map = [];
+            foreach ($sources as $source) {
+                if (!is_array($source)) throw new InvalidArgumentException('Invalid source entry.');
+                $key = (string)($source['source_id'] ?? '');
+                if (!preg_match('/^[A-Za-z0-9_-]{1,100}$/D', $key) || isset($source_map[$key])) throw new InvalidArgumentException('Invalid or repeated source key: '.$key);
+                $source['price'] = valuation_amount($source['price'] ?? null);
+                $source['shipping'] = valuation_amount($source['shipping'] ?? null);
+                $source['checked'] = valuation_date($source['checked'] ?? null);
+                $currency = strtoupper(trim((string)($source['currency'] ?? '')));
+                if ($currency!=='' && !preg_match('/^[A-Z]{3}$/D', $currency)) throw new InvalidArgumentException('Invalid source currency.');
+                if ($source['price']!==null && $currency==='') throw new InvalidArgumentException('Source amount requires a currency.');
+                $source['currency'] = $currency ?: null;
+                if (trim((string)($source['kind'] ?? '')) === '' || trim((string)($source['title'] ?? '')) === '') throw new InvalidArgumentException('Source title and observation kind are required.');
+                ksort($source); $encoded=json_encode($source,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);
+                if (isset($source_versions[$key]) && $source_versions[$key]!==$encoded) throw new InvalidArgumentException('Conflicting data for source '.$key);
+                $source_versions[$key]=$encoded; $source_map[$key]=$source;
+            }
+            $row['sources']=$source_map;
+            $row['roles']=[];
+            foreach (['used'=>'Használt irányérték forrása','replacement'=>'Pótlási referencia forrása'] as $role=>$column) {
+                $keys=preg_split('/[;,\s]+/',trim($input[$column]??''),-1,PREG_SPLIT_NO_EMPTY) ?: [];
+                foreach ($keys as $key) if (!isset($source_map[$key])) throw new InvalidArgumentException('Missing source details for '.$key.' on book '.$id);
+                if ($row[$role.'_amount']!==null && !$keys) throw new InvalidArgumentException('Estimate requires a source: book '.$id);
+                $row['roles'][$role]=$keys;
+            }
+            $row['bibliography']=array_intersect_key($input,array_flip(['Title','Authors','Publisher','Year','ISBN']));
+            $row['raw_json']=json_encode(['bibliography'=>$row['bibliography'],'assessment'=>array_diff_key($input,array_flip(['Forrásrészletek (JSON)','Copies JSON','Loaned To','Loaned Date']))],JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);
+            $rows[]=$row;
+            if (count($rows)>20000) throw new InvalidArgumentException('CSV row limit: 20000.');
+        }
+        if (!$rows) throw new InvalidArgumentException('No valuation records.');
+        return $rows;
+    } finally { fclose($fh); }
+}
+
+function valuation_match_rows(PDO $db, array $rows, bool $lock=false): array {
+    $ids=array_column($rows,'book_id'); $placeholders=implode(',',array_fill(0,count($ids),'?'));
+    $s=$db->prepare('SELECT b.book_id,b.title,b.year_published,b.isbn,p.name publisher FROM Books b LEFT JOIN Publishers p ON p.publisher_id=b.publisher_id WHERE b.book_id IN ('.$placeholders.') ORDER BY b.book_id'.($lock?' FOR UPDATE':''));
+    $s->execute($ids); $books=[];
+    foreach ($s->fetchAll(PDO::FETCH_ASSOC) as $book) $books[(int)$book['book_id']]=$book;
+    $conflicts=[];
+    foreach ($rows as $row) {
+        $book=$books[$row['book_id']]??null; $bib=$row['bibliography']; $errors=[];
+        if (!$book) $errors[]='Book ID does not exist';
+        else {
+            if (valuation_normalize($bib['Title'])!==valuation_normalize($book['title'])) $errors[]='Title differs';
+            if (!empty($bib['Publisher']) && valuation_normalize($bib['Publisher'])!==valuation_normalize((string)$book['publisher'])) $errors[]='Publisher differs';
+            if (!empty($bib['Year']) && (int)$bib['Year']!== (int)$book['year_published']) $errors[]='Year differs';
+            $isbn=fn($v)=>preg_replace('/[\s-]+/u','',mb_strtoupper((string)$v));
+            if (!empty($bib['ISBN']) && $isbn($bib['ISBN'])!==$isbn($book['isbn'])) $errors[]='ISBN differs';
+        }
+        if ($errors) $conflicts[]=['book_id'=>$row['book_id'],'title'=>$bib['Title'],'reasons'=>$errors];
+    }
+    return $conflicts;
+}
+
+function valuation_import_summary(array $rows, array $conflicts): array {
+    $sources=[]; foreach ($rows as $row) foreach ($row['sources'] as $key=>$_) $sources[$key]=true;
+    return ['records'=>count($rows),'matched'=>count($rows)-count($conflicts),'conflicts'=>$conflicts,'high_value'=>array_sum(array_column($rows,'is_high_value')),
+        'used_estimates'=>count(array_filter($rows,fn($r)=>$r['used_amount']!==null)), 'replacement_references'=>count(array_filter($rows,fn($r)=>$r['replacement_amount']!==null)), 'sources'=>count($sources)];
+}
+
+function valuation_apply_import(PDO $db, array $rows, string $sha, string $filename, ?int $actor=null): array {
+    $db->beginTransaction();
+    try {
+        $existing=$db->prepare('SELECT import_id FROM ValuationImports WHERE content_sha256=?'); $existing->execute([$sha]);
+        if ($id=$existing->fetchColumn()) { $db->rollBack(); return ['import_id'=>(int)$id,'already_imported'=>true,'applied'=>0]; }
+        $conflicts=valuation_match_rows($db,$rows,true);
+        if ($conflicts) throw new RuntimeException('Catalog changed or bibliographic conflicts remain. Preview the CSV again.',409);
+        $s=$db->prepare('INSERT INTO ValuationImports (content_sha256,original_filename,record_count,imported_by) VALUES (?,?,?,?)');
+        $s->execute([$sha,mb_substr(basename($filename),0,255),count($rows),$actor]); $import_id=(int)$db->lastInsertId();
+        $source_ids=[];
+        $source_insert=$db->prepare('INSERT INTO PriceObservations (import_id,source_key,title,amount,currency,shipping_amount,observation_kind,edition_match,source_url,seller,notes,event_date_text,checked_on,record_ids,raw_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)');
+        $columns=['book_id','import_id','used_amount','replacement_amount','currency','used_confidence','replacement_confidence','used_method','replacement_method','is_high_value','preservation_label','priority','reason','heirs_action','research_status','group_key','owner_condition','provenance','completeness','checked_on','raw_json'];
+        $insert=$db->prepare('INSERT INTO BookAssessments ('.implode(',',$columns).') VALUES ('.implode(',',array_fill(0,count($columns),'?')).')');
+        $link=$db->prepare('INSERT INTO BookAssessmentSources (assessment_id,observation_id,source_role) VALUES (?,?,?)');
+        foreach ($rows as $row) {
+            $row['import_id']=$import_id; $insert->execute(array_map(fn($key)=>$row[$key],$columns)); $assessment_id=(int)$db->lastInsertId();
+            foreach ($row['sources'] as $key=>$source) {
+                if (!isset($source_ids[$key])) {
+                    $scope=$source['record_ids']??implode(', ',$source['ids']??[]);
+                    $source_insert->execute([$import_id,$key,$source['title'],$source['price'],$source['currency'],$source['shipping'],$source['kind'],$source['match']??null,$source['url']??null,$source['seller']??null,$source['note']??null,$source['event']??null,$source['checked'],$scope,json_encode($source,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)]);
+                    $source_ids[$key]=(int)$db->lastInsertId();
+                }
+                $link->execute([$assessment_id,$source_ids[$key],'reference']);
+                foreach (['used','replacement'] as $role) if (in_array($key,$row['roles'][$role],true)) $link->execute([$assessment_id,$source_ids[$key],$role]);
+            }
+        }
+        $db->commit(); return ['import_id'=>$import_id,'already_imported'=>false,'applied'=>count($rows)];
+    } catch (Throwable $e) { if ($db->inTransaction()) $db->rollBack(); throw $e; }
+}
+
+function valuation_add_filter(PDO $db, array &$where, array &$params): void {
+    $filter=trim((string)($_GET['value_filter']??''));
+    if ($filter==='') return;
+    if (!in_array($filter,['high_value','priority','estimated'],true)) throw new InvalidArgumentException('Invalid value filter.');
+    if (!table_column_exists($db,'BookAssessments','assessment_id')) { $where[]='1=0'; return; }
+    $condition=match($filter) { 'high_value'=>'va.is_high_value=1', 'priority'=>"va.priority='Elsőként ellenőrizendő'", 'estimated'=>'(va.used_amount IS NOT NULL OR va.replacement_amount IS NOT NULL)' };
+    $where[]='EXISTS (SELECT 1 FROM BookAssessments va WHERE va.book_id=b.book_id AND va.assessment_id=(SELECT MAX(vb.assessment_id) FROM BookAssessments vb WHERE vb.book_id=b.book_id) AND '.$condition.')';
+}
+
+function valuation_get_latest(PDO $db, int $book_id): ?array {
+    if (!table_column_exists($db,'BookAssessments','assessment_id')) return null;
+    $s=$db->prepare('SELECT a.*, i.created_at imported_at, i.original_filename FROM BookAssessments a JOIN ValuationImports i ON i.import_id=a.import_id WHERE a.book_id=? ORDER BY a.assessment_id DESC LIMIT 1');
+    $s->execute([$book_id]); $row=$s->fetch(PDO::FETCH_ASSOC);
+    if (!$row) return null;
+    $s=$db->prepare('SELECT p.*, l.source_role FROM PriceObservations p JOIN BookAssessmentSources l ON l.observation_id=p.observation_id WHERE l.assessment_id=? ORDER BY p.source_key');
+    $s->execute([$row['assessment_id']]); $sources=[];
+    foreach ($s->fetchAll(PDO::FETCH_ASSOC) as $source) {
+        $key=$source['source_key']; $role=$source['source_role']; unset($source['source_role']);
+        if (!isset($sources[$key])) { $source['roles']=[]; $sources[$key]=$source; }
+        $sources[$key]['roles'][]=$role;
+    }
+    $row['sources']=array_values($sources);
+    $s=$db->prepare('SELECT assessment_id,import_id,created_at,used_amount,replacement_amount,is_high_value FROM BookAssessments WHERE book_id=? ORDER BY assessment_id DESC'); $s->execute([$book_id]);
+    $row['history']=$s->fetchAll(PDO::FETCH_ASSOC);
+    return $row;
+}
+
+function valuation_list_marks(PDO $db, array $book_ids): array {
+    if (!$book_ids || !table_column_exists($db,'BookAssessments','assessment_id')) return [];
+    $ids=array_map('intval',$book_ids);
+    $s=$db->prepare('SELECT a.book_id,a.is_high_value FROM BookAssessments a WHERE a.book_id IN ('.implode(',',array_fill(0,count($ids),'?')).') AND a.assessment_id=(SELECT MAX(v.assessment_id) FROM BookAssessments v WHERE v.book_id=a.book_id)');
+    $s->execute($ids); $result=[];
+    foreach ($s->fetchAll(PDO::FETCH_ASSOC) as $row) $result[(int)$row['book_id']]=$row;
+    return $result;
 }

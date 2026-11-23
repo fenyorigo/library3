@@ -453,6 +453,18 @@ if ($copy_documentation) {
     $zip->addFromString('COPY-DOCUMENTATION-RESTORE.txt', "Copy documentation manifest uses the original copy_id and document_id values.\nThe CSV importer does NOT restore this section.\nFor transfer use a full SQL dump preserving IDs and copy the private-attachments directory.\nFiles in copy-attachments/ belong in the configured private attachment root, outside public/.\n");
 }
 
+// Valuation history is backed up independently of the flat book CSV.
+if (table_column_exists($pdo, 'BookAssessments', 'assessment_id')) {
+    $valuations = [];
+    foreach (['ValuationImports','BookAssessments','PriceObservations','BookAssessmentSources'] as $table) {
+        $valuations[$table] = $pdo->query("SELECT * FROM `$table`")->fetchAll(PDO::FETCH_ASSOC);
+    }
+    $manifest = json_encode($valuations, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+    $zip->addFromString('data/valuations.json', $manifest);
+    $checksums[] = hash('sha256', $manifest) . '  data/valuations.json';
+    $zip->addFromString('VALUATIONS-RESTORE.txt', "Valuation imports, history, observations and source links use original book IDs.\nThe ordinary book CSV importer does not restore this section.\nTransfer the complete SQL dump preserving IDs; alternatively use the dedicated valuation CSV importer with source details.\n");
+}
+
 // finally add sha256s.txt to ZIP
 $zip->addFromString('sha256sums.txt', implode("\n", $checksums) . "\n");
 

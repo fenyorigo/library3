@@ -302,3 +302,12 @@ When the upload is a `.zip` file, the importer looks for the CSV at `data/books.
 `uploads/<book_id>/cover.<ext>` and `uploads/<book_id>/cover-thumb.<ext>` inside the ZIP.
 Path traversal is blocked (entries containing `..`, absolute paths, or drive letters are
 rejected). Covers are only copied when the `with_covers` checkbox is enabled.
+
+## Valuation enrichment (3.8.0)
+
+Valuation CSV is imported through **Import valuations**, not the ordinary book
+importer. It updates no bibliographic or physical-copy records. It requires
+existing ID/title matches, preview and confirmation, and includes source details
+in the `Forrásrészletek (JSON)` column. Estimates, replacement references,
+preservation status and observation history are stored separately. See
+[valuation CSV fields and migration](valuations.md).

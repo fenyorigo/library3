@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.8.0 - 2026-11-23
+
+- Added schema 3.5.0 / migration 06 for valuation imports, book assessment history, original-currency price observations and shared assessment/source links.
+- Added an admin **Import valuations** CSV workflow with bibliographic matching, preview, atomic application and SHA256-based repeat-import protection. Existing books, copies, condition photos and acquisition documents remain untouched.
+- Added **Értékelés és megőrzés** in book detail/edit dialogs: used-market estimates, replacement references, confidence, methods, heirs instructions, specimen notes and dated source evidence. Historical acquisition prices and unverified/ended offers remain source observations rather than being promoted to current market values.
+- Added the **Értékelés / megőrzés** filter and high-value preservation labels in the book list. Selected CSV/ZIP and statistics exports honor the same filter; filtering uses each book’s latest assessment.
+- Added complete valuation history and source manifests/checksums to full ZIP backups and documented full-SQL transfer requirements.
+- Added regression coverage for schema/migration equivalence, shared set prices, historical-vs-current price meaning, repeat imports, history, conflicts, rollback and preservation of existing photo/invoice links.
+
 ## 3.7.0 - 2026-11-23
 
 - Added full-size cover image downloads from book details and edit/view dialogs for both print and ebook records, including owner-supplied photographs.

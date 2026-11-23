@@ -179,6 +179,7 @@ if (books_table_has_record_status($pdo)) {
     }
 }
 
+try { valuation_add_filter($pdo, $where_chunks, $params); } catch (InvalidArgumentException $e) { json_fail($e->getMessage(), 400); }
 $where_sql = $where_chunks ? ('WHERE ' . implode(' AND ', $where_chunks)) : '';
 
 /** MAIN SELECT */
