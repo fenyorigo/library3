@@ -64,3 +64,11 @@ Two pre-existing cover files (`uploads/6077/cover.png` and
 `uploads/10617/cover.png`) contain unrecognized binary data. Their exact bytes are
 preserved; restoration reports a warning instead of silently losing them.
 Private condition photos and invoice PDFs still require recognized media content.
+
+
+### Catalog replacement with 3.9.1
+
+Purge catalog now clears all catalog/evidence rows and both media directories,
+retaining users, settings, preferences and ebook files. Use **3.9.1** for this
+purge/restore workflow; the schema stays **3.6.0**. See [catalog-purge.md](catalog-purge.md)
+for the first Fedora upgrade from schema 3.3.0 and subsequent refreshes.

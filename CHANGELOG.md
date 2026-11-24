@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.9.1 - 2026-11-24
+
+- Completed permanent catalog purge for copy photos, shared acquisition documents, valuation imports/history/sources and portable import records, using foreign-key order.
+- Public covers and private attachment files are staged before the database commit; normal database failures roll back rows and restore original file names. Cleanup failures after commit are reported with recovery locations.
+- Kept users/passwords, preferences/profile logos, system settings/schema metadata, authentication audit history, default covers and directory security files. Ebook repository files remain untouched; symlinks are never followed.
+- Updated purge confirmation and completion messages to include private photos/PDFs and cleanup warnings.
+- Validation: 59 isolated purge/restore checks, 11 frontend tests, HTTP authentication/admin/CSRF/confirmation checks, and a full 11,273-book / 14,458-file purge-and-ZIP-restore round trip with identical metadata/hashes and retained users/settings. The 3.3.0 → migrations 05/06/07 → ZIP workflow is covered. Schema remains 3.6.0.
+
 ## 3.9.0 - 2026-11-23
 
 - Schema 3.6.0 adds active/deleted flags to copies and linked evidence, preserving all files on ordinary deletion.

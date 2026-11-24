@@ -1115,7 +1115,7 @@ const onPurgeCatalog = async () => {
   if (!ensureAdmin()) return;
 
   const step1 = confirm(
-    "This will delete ALL catalog records and ALL cover/thumbnail files. This cannot be undone. Continue?"
+    "This will permanently delete ALL catalog records, valuations/history, covers, condition photos and invoice PDFs. Users, settings and ebook files are kept. Make sure you have a backup. Continue?"
   );
   if (!step1) return;
 
@@ -1138,8 +1138,10 @@ const onPurgeCatalog = async () => {
     const removedThumbFiles = Number(data.deleted_upload_thumb_files || 0);
     const removedOtherFiles = Number(data.deleted_upload_other_files || 0);
     const removedDirs = Number(data.deleted_upload_dirs || 0);
+    const removedAttachments = Number(data.deleted_attachment_files || 0);
+    const warnings = Array.isArray(data.warnings) ? data.warnings : [];
     alert(
-      `Catalog purge completed.\nRemoved bibliographic records: ${removedBookRecords}\nRemoved item instances (print + ebook): ${removedItemInstances}\nRemoved cover files: ${removedCoverFiles}\nRemoved thumbnail files: ${removedThumbFiles}\nRemoved other upload files: ${removedOtherFiles}\nRemoved upload files total: ${removedFiles}\nRemoved upload dirs: ${removedDirs}`
+      `Catalog purge completed.\nRemoved bibliographic records: ${removedBookRecords}\nRemoved item instances (print + ebook): ${removedItemInstances}\nRemoved cover files: ${removedCoverFiles}\nRemoved thumbnail files: ${removedThumbFiles}\nRemoved other upload files: ${removedOtherFiles}\nRemoved upload files total: ${removedFiles}\nRemoved upload dirs: ${removedDirs}\nRemoved private attachment files: ${removedAttachments}${warnings.length ? "\n\nAttention:\n" + warnings.join("\n") : ""}`
     );
     bumpAssetCacheVersion();
     page.value = 1;

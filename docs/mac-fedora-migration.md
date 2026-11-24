@@ -106,3 +106,11 @@ ZIP in Import books with Keep IDs, preferably into an empty catalog; CSV alone
 still cannot restore binary files. See [portable-archives.md](portable-archives.md).
 Apply migration 07 for schema 3.6.0 before importing. Archived records and their
 shared links are preserved. Ebook repository files remain a separate transfer.
+
+
+### Catalog replacement with 3.9.1
+
+Purge catalog now clears all catalog/evidence rows and both media directories,
+retaining users, settings, preferences and ebook files. Use **3.9.1** for this
+purge/restore workflow; the schema stays **3.6.0**. See [catalog-purge.md](catalog-purge.md)
+for the first Fedora upgrade from schema 3.3.0 and subsequent refreshes.

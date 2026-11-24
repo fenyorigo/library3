@@ -187,7 +187,7 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.9.0**
+Current application version: **3.9.1**
 Current schema version: **3.6.0**
 
 ## Catalog Statistics CSV
@@ -294,3 +294,9 @@ Selected-book ZIP export and Full backup both include CSV, complete book/copy/
 valuation metadata, cover images, condition photographs and invoice PDF scans in
 one portable archive. Import the complete ZIP through **Import books**, using
 **Keep IDs**; a dry run validates it first. See [Portable archives](docs/portable-archives.md).
+
+
+Version 3.9.1 completes **Purge catalog** for schema 3.6.0: it clears all active
+and archived catalog/evidence tables and their public/private media while keeping
+users, preferences, settings, authentication audit records and ebook binaries.
+Database failure rolls back staged media moves. See [purge and restore](docs/catalog-purge.md).
