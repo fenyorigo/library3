@@ -143,3 +143,21 @@ számlakapcsolatok változatlanságát.
 A `tests/print_csv_enrichment.php` teszt a `tests/valuation_import.php` után,
 ugyanazon elkülönített tesztadatbázison futtatható. Az adatlapok láthatóságát
 a `frontend/src/__tests__/print-sections.spec.js` teszt ellenőrzi.
+
+
+## Manual preservation category (3.9.2)
+
+In **Edit** on a printed or mixed print/ebook book, toggle **Nagy értékű / ritka
+könyv – külön kezelendő** and save. New printed books offer the same checkbox.
+The existing high-value filter includes these manually classified books.
+Unchecking clears the current category while retaining the full history.
+
+A change creates a new BookAssessment and ValuationImport audit record, with
+actor ID, change time and prior assessment ID recorded in raw_json. Existing
+price amounts, confidence/methods, observation dates, source links and roles are
+copied unchanged. Classification alone invents no monetary estimate. Ordinary
+edits with an untouched category do not create valuation revisions. Only an
+administrator can change the flag, and an active printed copy is required.
+The save shares the book transaction, so a rejected category change rolls back
+other edits too. CSV enrichment and both portable ZIP exports include the
+current category and history automatically; existing schema 3.6.0 is sufficient.

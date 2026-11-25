@@ -97,7 +97,7 @@ $sortable = [
  'authors'   => "CASE WHEN authors IS NULL THEN 1 ELSE 0 END, authors",
  'authors_hu'=> "CASE WHEN authors_hu_flag IS NULL THEN 1 ELSE 0 END, authors_hu_flag",
  'bookcase'  => 'pl.bookcase_no',
-  'cover'     => '(b.cover_image IS NOT NULL AND b.cover_image <> "")',
+  'cover'     => catalog_real_cover_sql(),
   'status'    => "CASE WHEN (b.loaned_to IS NOT NULL AND b.loaned_to <> '') OR b.loaned_date IS NOT NULL THEN 1 ELSE 0 END",
   'isbn'      => 'b.isbn',
   'loaned_to' => 'b.loaned_to',
@@ -241,7 +241,7 @@ $where_sql = $where_chunks ? ('WHERE ' . implode(' AND ', $where_chunks)) : '';
  * Use same FROM/JOINs as main query except computed columns.
  */
 $sql_count = "
-  SELECT COUNT(*) AS c
+  SELECT COUNT(*) AS c, COALESCE(SUM(" . catalog_real_cover_sql() . "),0) AS cover_count
   FROM Books b
   LEFT JOIN Publishers p ON p.publisher_id = b.publisher_id
   LEFT JOIN Placement  pl ON pl.placement_id = b.placement_id
@@ -254,7 +254,9 @@ try {
         $st->bindValue(':' . $k, $v, PDO::PARAM_STR);
     }
     $st->execute();
-    $total = (int)$st->fetchColumn();
+    $counts=$st->fetch(PDO::FETCH_ASSOC);
+    $total=(int)$counts['c'];
+    $cover_count=(int)$counts['cover_count'];
 } catch (Throwable $e) {
     json_fail('COUNT query failed: ' . $e->getMessage(), 500);
 }
@@ -279,7 +281,7 @@ SELECT
   b.notes,
   b.cover_image,
   b.cover_thumb,
-  (b.cover_image IS NOT NULL AND b.cover_image <> '') AS has_cover,
+  " . catalog_real_cover_sql() . " AS has_cover,
   b.loaned_to,
   b.loaned_date,
   CASE
@@ -373,7 +375,7 @@ try {
     $copy_map = fetch_book_copies_map($pdo, array_map(static fn (array $row): int => (int)$row['id'], $rows), true);
     $valuation_marks = valuation_list_marks($pdo, array_column($rows, 'id'));
     foreach ($rows as &$row) {
-        $row['has_cover'] = !empty($row['cover_image']);
+        $row['has_cover'] = catalog_has_real_cover($row['cover_image']);
         $row['is_high_value'] = (int)($valuation_marks[(int)$row['id']]['is_high_value'] ?? 0);
         $row['record_status'] = normalize_book_record_status($row['record_status'] ?? 'active');
         $row['language'] = normalize_book_language($row['language'] ?? 'unknown');
@@ -393,6 +395,7 @@ json_out([
   'data' => $rows,
   'meta' => [
     'total' => $total,
+    'cover_count' => $cover_count,
     'page' => $page,
     'per_page' => $limit,
   ],

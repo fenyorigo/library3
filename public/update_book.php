@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/functions.php';
 require __DIR__ . '/auth.php';
-require_admin();
+$me=require_admin();
 
 // Never leak warnings/notices into JSON
 error_reporting(E_ALL & ~E_DEPRECATED);
@@ -24,7 +24,9 @@ try {
     };
 
     $pdo = pdo();
-    $d   = json_in(); // <- from functions.php
+    $d   = json_in();
+    $classification_key_present=array_key_exists('is_high_value',$d);
+    if ($classification_key_present && !is_bool($d['is_high_value'])) throw new InvalidArgumentException('is_high_value must be a boolean.');
 
     // Accept either id or book_id
     $id = (int)($d['id'] ?? $d['book_id'] ?? 0);
@@ -141,12 +143,12 @@ try {
         $params[':placement_id'] = $placement_id;
     }
 
-    if (!$sets && !$author_key_present && !$subjects_key_present && !$copies_key_present) {
+    if (!$sets && !$author_key_present && !$subjects_key_present && !$copies_key_present && !$classification_key_present) {
         json_fail('No updatable fields provided', 400);
     }
 
     $own_tx = false;
-    if (($author_key_present || $subjects_key_present || $copies_key_present) && !$pdo->inTransaction()) {
+    if (($author_key_present || $subjects_key_present || $copies_key_present || $classification_key_present) && !$pdo->inTransaction()) {
         $pdo->beginTransaction();
         $own_tx = true;
     }
@@ -234,6 +236,7 @@ try {
         ")->execute([':id' => $id]);
     }
 
+    if ($classification_key_present) valuation_set_high_value($pdo,$id,$d['is_high_value'],(int)$me['uid']);
     if ($own_tx) $pdo->commit();
 
     $affected_rows = isset($st) ? $st->rowCount() : 0;

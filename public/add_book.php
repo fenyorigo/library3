@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/functions.php';
 require __DIR__ . '/auth.php';
-require_admin();
+$me=require_admin();
 
 error_reporting(E_ALL & ~E_DEPRECATED);
 ini_set('display_errors', '0');
@@ -48,12 +48,15 @@ try {
             }
         }
     } else {
-        $d = json_in();            // from functions.php
+        $d = json_in();
     }
     if (!is_array($d)) {
         if ($started_tx) $pdo->rollBack();
         json_fail('Invalid JSON body', 400);
     }
+
+    $classification_key_present=array_key_exists('is_high_value',$d);
+    if ($classification_key_present && !is_bool($d['is_high_value'])) throw new InvalidArgumentException('is_high_value must be a boolean.');
 
     // required
     $title = N($d['title'] ?? null);
@@ -164,6 +167,8 @@ try {
         $sync = sync_book_copy_derived_fields($pdo, $book_id);
         $copy_count = (int)($sync['copy_count'] ?? $copy_count);
     }
+
+    if ($classification_key_present) valuation_set_high_value($pdo,$book_id,$d['is_high_value'],(int)$me['uid']);
 
     // Link authors if provided (this must NOT start its own TX if one is already open)
     if ($authors_csv || $authors_metadata_json) {

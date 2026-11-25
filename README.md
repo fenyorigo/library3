@@ -187,7 +187,7 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.9.1**
+Current application version: **3.9.2**
 Current schema version: **3.6.0**
 
 ## Catalog Statistics CSV
@@ -300,3 +300,11 @@ Version 3.9.1 completes **Purge catalog** for schema 3.6.0: it clears all active
 and archived catalog/evidence tables and their public/private media while keeping
 users, preferences, settings, authentication audit records and ebook binaries.
 Database failure rolls back staged media moves. See [purge and restore](docs/catalog-purge.md).
+
+
+Version 3.9.2 fixes the results summary to show real cover references across all
+filtered results (excluding default-cover/default_cover variants). Printed-book
+create/edit dialogs offer a **Nagy értékű / ritka könyv** checkbox. Saving a change
+appends an assessment revision while retaining all price/source evidence, so the
+existing high-value filter, CSV and portable backups carry the manual category.
+Schema remains 3.6.0; no new migration is required.

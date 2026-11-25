@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.9.2 - 2026-11-25
+
+- Replaced the misleading images total with a filtered, pagination-independent covers count. Default-cover placeholders no longer count or display as real covers; cover sorting uses the same predicate.
+- Added a printed-book create/edit checkbox for high-value/rare preservation classification, including removal of that classification. Reader/view/ebook-only/archived forms do not expose the checkbox.
+- Manual category changes append immutable assessment/import audit revisions, retaining amounts, confidence, checked dates, original evidence and source roles. Unchanged checkboxes create no new history.
+- Existing filters, CSV enrichment and portable ZIP backups restore manual categories and history using the existing 3.6.0 schema. No migration required.
+- Validation: 54 PHP checks and 20 frontend tests, plus HTTP checks for pagination/filter cover counts, permissions/CSRF, printed-only rollback, JSON/multipart create/update, CSV and portable ZIP exports. Existing financial evidence and history survive manual edits and ZIP round trips.
+
 ## 3.9.1 - 2026-11-24
 
 - Completed permanent catalog purge for copy photos, shared acquisition documents, valuation imports/history/sources and portable import records, using foreign-key order.

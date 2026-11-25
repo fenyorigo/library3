@@ -127,6 +127,7 @@
       v-if="user"
       :rows="rows"
       :total="total"
+      :cover-count="coverCount"
       :page="page"
       :per-page="perPage"
       :sort="sort"
@@ -352,6 +353,7 @@ import { APP_VERSION_DISPLAY } from "./version";
 
 const rows = ref([]);
 const total = ref(0);
+const coverCount = ref(0);
 const page = ref(1);
 const perPage = ref(25);
 const perPageSource = ref("default");
@@ -459,6 +461,7 @@ const onBeforeUnload = (event) => {
 const onUnauthorized = () => {
   rows.value = [];
   total.value = 0;
+  coverCount.value = 0;
   showDetail.value = false;
   selectedBook.value = null;
   showDialog.value = false;
@@ -837,6 +840,7 @@ const reload = async () => {
 
     rows.value = data;
     total.value = Number.isFinite(meta.total) ? meta.total : 0;
+    coverCount.value = Number.isFinite(meta.cover_count) ? meta.cover_count : 0;
     page.value = Number.isFinite(meta.page) ? meta.page : 1;
     perPage.value = Number.isFinite(meta.per_page) ? meta.per_page : perPage.value;
 

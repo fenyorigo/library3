@@ -113,7 +113,9 @@ try {
         json_fail('Book not found', 404);
     }
 
-    $row['has_cover'] = !empty($row['cover_image']);
+    $row['has_cover'] = catalog_has_real_cover($row['cover_image']);
+    $marks=valuation_list_marks($pdo,[$id]);
+    $row['is_high_value']=(int)($marks[$id]['is_high_value']??0);
     $row['record_status'] = $record_status;
     $row['language'] = normalize_book_language($row['language'] ?? 'unknown');
     $authors_metadata_map = fetch_book_authors_metadata_map($pdo, [$id]);

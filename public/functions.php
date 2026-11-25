@@ -2893,3 +2893,44 @@ function portable_validate_metadata(array $tables,array $files): void {
     foreach($tables['PriceObservations'] as $row){$parent('ValuationImports',$row['import_id']);$status($row,isset($prices[$row['observation_id']]));}
     foreach(['BookCopyPhotos','AcquisitionDocuments'] as $table)foreach($tables[$table] as $row)if(!empty($row['file_path'])){$file=$files['copy-attachments/'.$row['file_path']]??null;if(!$file||(!empty($row['sha256'])&&$row['sha256']!==$file['sha256'])||($row['file_size']!==null&&(int)$row['file_size']!==(int)$file['size']))throw new InvalidArgumentException('Attachment metadata differs from file declaration.');}
 }
+
+/** Count catalog-specific cover references, excluding all default-cover variants. */
+function catalog_real_cover_sql(string $column='b.cover_image'): string {
+    if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)?$/D',$column)) throw new InvalidArgumentException('Invalid cover column.');
+    $name="LOWER(SUBSTRING_INDEX(SUBSTRING_INDEX(SUBSTRING_INDEX(TRIM($column),'?',1),'#',1),'/',-1))";
+    return "(TRIM(COALESCE($column,''))<>'' AND $name<>'' AND $name NOT REGEXP '^default[-_]cover[.][a-z0-9]+$')";
+}
+function catalog_has_real_cover(?string $path): bool {
+    $path=trim($path??'');
+    $name=strtolower(basename(explode('#',explode('?',$path,2)[0],2)[0]));
+    return $path!=='' && $name!=='' && !preg_match('/^default[-_]cover\.[a-z0-9]+$/D',$name);
+}
+
+/** A manual category change is an immutable revision, retaining amounts and source roles. */
+function valuation_set_high_value(PDO $db,int $book_id,bool $flag,?int $actor): bool {
+    if (!$db->inTransaction()) throw new LogicException('Classification must share the book save transaction.');
+    $s=$db->prepare('SELECT record_status FROM Books WHERE book_id=? FOR UPDATE');$s->execute([$book_id]);$status=$s->fetchColumn();
+    if ($status===false) throw new InvalidArgumentException('Book not found.');
+    $s=$db->prepare("SELECT copy_id FROM BookCopies WHERE book_id=? AND format='print' AND record_status='active' LIMIT 1");$s->execute([$book_id]);
+    if ($status!=='active' || !$s->fetchColumn()) throw new InvalidArgumentException('High-value/rare classification requires an active printed copy.');
+    $s=$db->prepare('SELECT * FROM BookAssessments WHERE book_id=? ORDER BY assessment_id DESC LIMIT 1 FOR UPDATE');$s->execute([$book_id]);$previous=$s->fetch(PDO::FETCH_ASSOC);
+    if ((bool)($previous['is_high_value']??false)===$flag) return false;
+    $raw=$previous?json_decode($previous['raw_json'],true,64,JSON_THROW_ON_ERROR):[];
+    $label=$flag?'Nagy értékű – külön kezelendő':null;
+    $raw['assessment']['Megőrzési értékkategória']=$label??'';
+    $raw['manual_classification']=['is_high_value'=>$flag,'actor_id'=>$actor,'changed_at'=>gmdate('c'),'previous_assessment_id'=>$previous['assessment_id']??null];
+    $encoded=json_encode($raw,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR);
+    $db->prepare('INSERT INTO ValuationImports(content_sha256,original_filename,record_count,imported_by) VALUES(?,?,1,?)')->execute([hash('sha256',random_bytes(32).$encoded),'Manual high-value/rare classification',$actor]);
+    $import_id=(int)$db->lastInsertId();
+    if ($previous) {
+        $columns=array_values(array_diff(array_keys($previous),['assessment_id','created_at']));
+        $values=$previous;$values['import_id']=$import_id;$values['is_high_value']=$flag?1:0;$values['preservation_label']=$label;$values['raw_json']=$encoded;$values['record_status']='active';
+        $db->prepare('INSERT INTO BookAssessments (`'.implode('`,`',$columns).'`) VALUES ('.implode(',',array_fill(0,count($columns),'?')).')')->execute(array_map(fn($column)=>$values[$column],$columns));
+    } else {
+        $db->prepare('INSERT INTO BookAssessments(book_id,import_id,is_high_value,preservation_label,raw_json) VALUES(?,?,?,?,?)')->execute([$book_id,$import_id,$flag?1:0,$label,$encoded]);
+    }
+    $assessment_id=(int)$db->lastInsertId();
+    if ($previous) $db->prepare('INSERT INTO BookAssessmentSources(assessment_id,observation_id,source_role,record_status) SELECT ?,observation_id,source_role,record_status FROM BookAssessmentSources WHERE assessment_id=?')->execute([$assessment_id,$previous['assessment_id']]);
+    catalog_evidence_sync($db);
+    return true;
+}

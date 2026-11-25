@@ -298,6 +298,7 @@ const emit = defineEmits([
 const props = defineProps({
   rows: { type: Array, default: () => [] },
   total: { type: Number, default: 0 },
+  coverCount: { type: Number, default: 0 },
   page: { type: Number, default: 1 },
   perPage: { type: Number, default: 25 },
   sort: { type: String, default: "" },
@@ -356,14 +357,14 @@ const maxPage = computed(() => {
 
 const resultsSummary = computed(() => {
   const totalCount = Number(total.value || 0);
-  if (totalCount <= 0) return "Results: 0 of 0 (0 images)";
+  if (totalCount <= 0) return "Results: 0 of 0 (0 covers)";
 
   const per = Math.max(1, Number(perPage.value || 1));
   const currentPage = Math.max(1, Number(page.value || 1));
   const start = ((currentPage - 1) * per) + 1;
   const end = Math.min(currentPage * per, totalCount);
 
-  return `Results: ${start}-${end} of ${totalCount} (${totalCount} images)`;
+  return `Results: ${start}-${end} of ${totalCount} (${Number(props.coverCount || 0)} covers)`;
 });
 
 const bookTotalFileSizeMB = (book) => {

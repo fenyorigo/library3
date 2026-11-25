@@ -295,6 +295,10 @@
           <div v-if="readonly" class="ro">{{ book.loaned_date || '—' }}</div>
           <input v-else type="date" v-model="form.loaned_date" />
         </div>
+        <label v-if="!readonly && hasFormPrintCopy && (mode === 'create' || book.record_status !== 'deleted')" class="classification-option">
+          <input type="checkbox" v-model="form.is_high_value" data-test="high-value-checkbox" />
+          Nagy értékű / ritka könyv – külön kezelendő
+        </label>
         <CopyArchive v-if="canManage && safeId && mode !== 'create'" :book-id="safeId" @restored="onCopyRestored" />
         <BookValuation :key="evidenceRevision" v-if="hasPrintCopy && safeId && mode !== 'create'" :book-id="safeId" />
         <CopyDocumentation :key="evidenceRevision" v-if="hasPrintCopy && safeId && mode !== 'create'" :book-id="safeId" :can-manage="canManage && !readonly" />
@@ -505,6 +509,7 @@ const initForm = (b = {}, mode = "view") => {
       loaned_date: b.loaned_date || "",
       bookcase_no: b.bookcase_no ?? null,
       shelf_no: b.shelf_no ?? null,
+      is_high_value: false,
       copies: initCopies(b).map(copy => ({ ...copy, copy_id: null })),
     };
   }
@@ -528,6 +533,7 @@ const initForm = (b = {}, mode = "view") => {
     loaned_date: b.loaned_date || "",
     bookcase_no: b.bookcase_no ?? null,
     shelf_no: b.shelf_no ?? null,
+    is_high_value: Boolean(Number(b.is_high_value || 0)),
     copies: initCopies(b),
   };
 };
@@ -568,6 +574,7 @@ function onCopyRestored(data) {
   evidenceRevision.value++;
   emit('updated');
 }
+const hasFormPrintCopy = computed(() => form.value.copies.some(copy => copy.format === "print"));
 const hasPrintCopy = computed(() => bookCopies.value.some(copy => String(copy.format).toLowerCase() === "print"));
 const authorDisplayRows = computed(() => authorsDetailFromBook(props.book || {}));
 const authorAliasRows = computed(() => {
@@ -935,6 +942,10 @@ const save = () => {
       notes: null,
     }];
   }
+  if (payload.copies.some(copy => copy.format === "print") &&
+      (props.mode === "create" ? form.value.is_high_value : form.value.is_high_value !== Boolean(Number(props.book?.is_high_value || 0)))) {
+    payload.is_high_value = form.value.is_high_value;
+  }
   payload.copy_count = payload.copies.reduce((sum, copy) => sum + Math.max(1, Number(copy.quantity || 1)), 0);
 
   if (form.value.publisher_id != null) {
@@ -1104,6 +1115,7 @@ const onDelete = async (type) => {
   color: var(--app-fg);
 }
 
+.classification-option { display:flex; gap:.6rem; align-items:center; margin:1rem 0; }
 .images { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 1rem; }
 .imgbox { border: 1px dashed #ddd; border-radius: 8px; padding: .75rem; }
 .imgbox img { max-width: 100%; height: auto; display: block; border-radius: 6px; border: 1px solid #eee; }

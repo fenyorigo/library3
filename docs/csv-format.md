@@ -335,3 +335,11 @@ ZIP in Import books with Keep IDs, preferably into an empty catalog; CSV alone
 still cannot restore binary files. See [portable-archives.md](portable-archives.md).
 Apply migration 07 for schema 3.6.0 before importing. Archived records and their
 shared links are preserved. Ebook repository files remain a separate transfer.
+
+
+### Manual preservation classification (3.9.2)
+
+The printed-book high-value/rare checkbox uses the existing preservation label
+column and assessment-history JSON. Manual revisions preserve old price/source
+information and are included in standalone CSV and both ZIP exports without any
+new CSV columns or schema migration.
