@@ -77,6 +77,7 @@
             <option value="estimated">Van árbecslés / pótlási referencia</option>
           </select>
         </label>
+        <button v-if="isAdmin" @click="curatorOpen = true">Kurátori rendezés</button>
         <button v-if="isAdmin" @click="valuationImportOpen = true">Import valuations</button>
         <button @click="resetSort">Reset sort</button>
         <button v-if="isAdmin" class="primary" @click="openAdd">+ Add Book</button>
@@ -183,6 +184,7 @@
       v-if="showEbookOrphanMaintenance"
       @close="showEbookOrphanMaintenance = false"
     />
+    <CuratorModal v-if="curatorOpen && isAdmin" @close="curatorOpen = false" @saved="reload" />
     <AuthorsMaintenance
       v-if="showAuthorsMaintenance"
       @close="showAuthorsMaintenance = false"
@@ -322,6 +324,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import BookDetailModal from "./components/BookDetailModal.vue";
 import BookDialog from "./components/BookDialog.vue";
+import CuratorModal from "./components/CuratorModal.vue";
 import ValuationImportModal from "./components/ValuationImportModal.vue";
 import BookList from "./components/BookList.vue";
 import CsvImportModal from "./components/CsvImportModal.vue";
@@ -364,6 +367,7 @@ const formatFilter = ref("");
 const languageFilter = ref("");
 const valueFilter = ref("");
 const valuationImportOpen = ref(false);
+const curatorOpen = ref(false);
 const recordStatusFilter = ref("active");
 const loading = ref(false);
 const ignorePopStateOnce = ref(false);

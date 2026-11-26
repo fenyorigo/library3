@@ -31,6 +31,8 @@ $language_filter_raw = strtolower(trim((string)($_GET['language'] ?? '')));
 $allowed_languages = ['unknown', 'hu', 'en', 'de', 'fr'];
 $language_filter = in_array($language_filter_raw, $allowed_languages, true) ? $language_filter_raw : null;
 $is_admin = (($me['role'] ?? '') === 'admin');
+$curator_mode=($_GET['curator']??'')==='1'||($_GET['curator_all']??'')==='1';
+if($curator_mode){if(!$is_admin)json_fail('Admin required',403);require_once __DIR__.'/curator_helpers.php';}
 $record_status_in = strtolower(trim((string)($_GET['record_status'] ?? 'active')));
 $record_status_filter = 'active';
 if ($is_admin && in_array($record_status_in, ['active', 'deleted', 'all'], true)) {
@@ -42,21 +44,6 @@ $sort_in   = strtolower((string)($_GET['sort'] ?? 'id'));
 $dir_in    = strtolower((string)($_GET['dir']  ?? 'desc'));
 $dir_sql   = ($dir_in === 'asc') ? 'ASC' : 'DESC';
 $offset   = ($page - 1) * $limit;
-
-function search_fold_value(string $value): string {
-    $value = normalize_unicode_nfc(strip_invisible_format_chars($value));
-    if (class_exists('Normalizer')) {
-        $decomposed = Normalizer::normalize($value, Normalizer::FORM_D);
-        if (is_string($decomposed)) {
-            $value = preg_replace('/\p{Mn}+/u', '', $decomposed) ?? $decomposed;
-        }
-    }
-    $value = strtr($value, [
-        'ß' => 'ss', 'ẞ' => 'ss', 'æ' => 'ae', 'Æ' => 'ae', 'œ' => 'oe', 'Œ' => 'oe',
-        'ø' => 'o', 'Ø' => 'o', 'ł' => 'l', 'Ł' => 'l', 'đ' => 'd', 'Đ' => 'd',
-    ]);
-    return mb_strtolower($value, 'UTF-8');
-}
 
 function search_fold_sql(string $expr): string {
     $sql = "LOWER(COALESCE({$expr}, ''))";
@@ -261,6 +248,12 @@ try {
     json_fail('COUNT query failed: ' . $e->getMessage(), 500);
 }
 
+if (($_GET['curator_all']??'')==='1') {
+    if($total>20000)json_fail('Legfeljebb 20000 találat jelölhető ki egyszerre. Szűkítsd a keresést.',400);
+    $s=$pdo->prepare("SELECT b.book_id id,b.title,b.series,b.record_status FROM Books b LEFT JOIN Publishers p ON p.publisher_id=b.publisher_id LEFT JOIN Placement pl ON pl.placement_id=b.placement_id $where_sql ORDER BY b.book_id LIMIT 20001");
+    $s->execute($params);$all_rows=$s->fetchAll(PDO::FETCH_ASSOC);if(count($all_rows)>20000)json_fail('Legfeljebb 20000 találat jelölhető ki egyszerre.',400);json_out(['ok'=>true,'data'=>curator_annotate($pdo,$all_rows,$q),'meta'=>['total'=>count($all_rows)]]);
+}
+
 /**
  * MAIN SELECT (one row per book)
  * - cover_thumb is just an alias of cover_image for UI convenience
@@ -388,6 +381,8 @@ try {
 } catch (Throwable $e) {
     json_fail('MAIN query failed: ' . $e->getMessage(), 500);
 }
+
+if($curator_mode)$rows=curator_annotate($pdo,$rows,$q);
 
 // Output JSON
 json_out([

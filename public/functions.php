@@ -2934,3 +2934,19 @@ function valuation_set_high_value(PDO $db,int $book_id,bool $flag,?int $actor): 
     catalog_evidence_sync($db);
     return true;
 }
+
+function search_fold_value(string $value): string {
+    $value = normalize_unicode_nfc(strip_invisible_format_chars($value));
+    if (class_exists('Normalizer')) {
+        $decomposed = Normalizer::normalize($value, Normalizer::FORM_D);
+        if (is_string($decomposed)) {
+            $value = preg_replace('/\p{Mn}+/u', '', $decomposed) ?? $decomposed;
+        }
+    }
+    $value = preg_replace('/\p{Mn}+/u', '', $value) ?? $value;
+    $value = strtr($value, [
+        'ß' => 'ss', 'ẞ' => 'ss', 'æ' => 'ae', 'Æ' => 'ae', 'œ' => 'oe', 'Œ' => 'oe',
+        'ø' => 'o', 'Ø' => 'o', 'ł' => 'l', 'Ł' => 'l', 'đ' => 'd', 'Đ' => 'd',
+    ]);
+    return strtr(mb_strtolower($value, 'UTF-8'), ['á'=>'a','à'=>'a','â'=>'a','ä'=>'a','ã'=>'a','å'=>'a','ă'=>'a','ą'=>'a','é'=>'e','è'=>'e','ê'=>'e','ë'=>'e','ě'=>'e','ę'=>'e','í'=>'i','ì'=>'i','î'=>'i','ï'=>'i','ó'=>'o','ò'=>'o','ô'=>'o','ö'=>'o','õ'=>'o','ő'=>'o','ú'=>'u','ù'=>'u','û'=>'u','ü'=>'u','ű'=>'u','ý'=>'y','ÿ'=>'y','ñ'=>'n','ç'=>'c','ć'=>'c','č'=>'c']);
+}

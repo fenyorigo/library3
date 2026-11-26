@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.10.0 - 2026-11-26
+
+- Added an admin curator menu using the existing catalog search and print/ebook/all filters. Selection can span pages or include the full result set, with a separate clear-selection action.
+- Added common author/series fields. Author replacement is bound to the searched author; coauthors, link order and aliases remain. Existing canonical author rows are reused; unselected books and shared author metadata are untouched.
+- Added independent series replacement and explicit clearing. Blank fields mean no change.
+- Bulk saves validate field versions, reject archived/stale records or conflicting aliases, and commit all selected edits and audit entries in one transaction.
+- Validation: 27 backend checks, 25 frontend tests and HTTP checks for search parity, full-result selection, selected-only edits, canonical-author reuse, duplicate-link merging, coauthor preservation, rollback and CSV/portable ZIP metadata. Live book/author/link snapshots remained identical after deployment. No schema migration; schema stays 3.6.0.
+
 ## 3.9.2 - 2026-11-25
 
 - Replaced the misleading images total with a filtered, pagination-independent covers count. Default-cover placeholders no longer count or display as real covers; cover sorting uses the same predicate.

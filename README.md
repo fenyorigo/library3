@@ -187,7 +187,7 @@ Current state:
 - import-time language inference is implemented
 - security hardening applied (v3.1.1)
 
-Current application version: **3.9.2**
+Current application version: **3.10.0**
 Current schema version: **3.6.0**
 
 ## Catalog Statistics CSV
@@ -308,3 +308,11 @@ create/edit dialogs offer a **Nagy értékű / ritka könyv** checkbox. Saving a
 appends an assessment revision while retaining all price/source evidence, so the
 existing high-value filter, CSV and portable backups carry the manual category.
 Schema remains 3.6.0; no new migration is required.
+
+
+Version 3.10.0 adds the admin **Kurátori rendezés** menu: the same catalog search
+with print/ebook/all filters, selection across pages, and shared author/series
+fields. Only the searched source author is replaced on selected books; coauthors,
+order and aliases are retained. Existing canonical authors are reused, and series
+can be changed independently or explicitly cleared. See [curator guide](docs/curator.md).
+Schema remains 3.6.0; no migration is needed.
